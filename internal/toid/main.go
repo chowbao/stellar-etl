@@ -1,7 +1,6 @@
 package toid
 
 import (
-	"errors"
 	"fmt"
 )
 
@@ -82,37 +81,6 @@ const (
 	// the operation component
 	OperationShift = 0
 )
-
-// AfterLedger returns a new toid that represents the ledger time _after_ any
-// contents (e.g. transactions, operations) that occur within the specified
-// ledger.
-func AfterLedger(seq int32) *ID {
-	return New(seq, TransactionMask, OperationMask)
-}
-
-// LedgerRangeInclusive returns inclusive range representation between two
-// ledgers inclusive. The second value points at the to+1 ledger so when using
-// this value make sure < order is used.
-func LedgerRangeInclusive(from, to int32) (int64, int64, error) {
-	if from > to {
-		return 0, 0, errors.New("Invalid range: from > to")
-	}
-
-	if from <= 0 || to <= 0 {
-		return 0, 0, errors.New("Invalid range: from or to negative")
-	}
-
-	var toidFrom, toidTo int64
-	if from == 1 {
-		toidFrom = 0
-	} else {
-		toidFrom = New(from, 0, 0).ToInt64()
-	}
-
-	toidTo = New(to+1, 0, 0).ToInt64()
-
-	return toidFrom, toidTo, nil
-}
 
 // IncOperationOrder increments the operation order, rolling over to the next
 // ledger if overflow occurs.  This allows queries to easily advance a cursor to
