@@ -83,16 +83,6 @@ type TransactionOutput struct {
 	TxSigners                            []string       `json:"tx_signers"`
 }
 
-type LedgerTransactionOutput struct {
-	LedgerSequence  uint32    `json:"ledger_sequence"`
-	TxEnvelope      string    `json:"tx_envelope"`
-	TxResult        string    `json:"tx_result"`
-	TxMeta          string    `json:"tx_meta"`
-	TxFeeMeta       string    `json:"tx_fee_meta"`
-	TxLedgerHistory string    `json:"tx_ledger_history"`
-	ClosedAt        time.Time `json:"closed_at"`
-}
-
 // AccountOutput is a representation of an account that aligns with the BigQuery table accounts
 type AccountOutput struct {
 	AccountID            string      `json:"account_id"` // account address
@@ -309,47 +299,6 @@ type TradeOutput struct {
 	RoundingSlippage             null.Int    `json:"rounding_slippage"`
 	SellerIsExact                null.Bool   `json:"seller_is_exact"`
 	SellingLiquidityPoolIDStrkey null.String `json:"selling_liquidity_pool_id_strkey"`
-}
-
-// DimAccount is a representation of an account that aligns with the BigQuery table dim_accounts
-type DimAccount struct {
-	ID      uint64 `json:"account_id"`
-	Address string `json:"address"`
-}
-
-// DimOffer is a representation of an account that aligns with the BigQuery table dim_offers
-type DimOffer struct {
-	HorizonID     int64   `json:"horizon_offer_id"`
-	DimOfferID    uint64  `json:"dim_offer_id"`
-	MarketID      uint64  `json:"market_id"`
-	MakerID       uint64  `json:"maker_id"`
-	Action        string  `json:"action"`
-	BaseAmount    float64 `json:"base_amount"`
-	CounterAmount float64 `json:"counter_amount"`
-	Price         float64 `json:"price"`
-}
-
-// FactOfferEvent is a representation of an offer event that aligns with the BigQuery table fact_offer_events
-type FactOfferEvent struct {
-	LedgerSeq       uint32 `json:"ledger_id"`
-	OfferInstanceID uint64 `json:"offer_instance_id"`
-}
-
-// DimMarket is a representation of an account that aligns with the BigQuery table dim_markets
-type DimMarket struct {
-	ID            uint64 `json:"market_id"`
-	BaseCode      string `json:"base_code"`
-	BaseIssuer    string `json:"base_issuer"`
-	CounterCode   string `json:"counter_code"`
-	CounterIssuer string `json:"counter_issuer"`
-}
-
-// NormalizedOfferOutput ties together the information for dim_markets, dim_offers, dim_accounts, and fact_offer-events
-type NormalizedOfferOutput struct {
-	Market  DimMarket
-	Offer   DimOffer
-	Account DimAccount
-	Event   FactOfferEvent
 }
 
 type SponsorshipOutput struct {
