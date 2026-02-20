@@ -434,7 +434,7 @@ func addAccountAndMuxedAccountDetails(result map[string]interface{}, a xdr.Muxed
 		if err != nil {
 			return err
 		}
-		result[prefix+"muxed_id"] = muxedAccountId
+		result[prefix+"muxed_id"] = strconv.FormatUint(muxedAccountId, 10)
 	}
 	return nil
 }
