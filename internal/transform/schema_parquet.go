@@ -273,10 +273,10 @@ type ContractDataOutputParquet struct {
 	ClosedAt                  int64       `parquet:"name=closed_at, type=INT64, convertedtype=TIMESTAMP_MILLIS"`
 	LedgerSequence            int64       `parquet:"name=ledger_sequence, type=INT64, convertedtype=UINT_64"`
 	LedgerKeyHash             string      `parquet:"name=ledger_key_hash, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
-	Key                       interface{} `parquet:"name=key, type=MAP, convertedtype=MAP, keytype=BYTE_ARRAY, keyconvertedtype=UTF8, valuetype=STRING"`
-	KeyDecoded                interface{} `parquet:"name=key_decoded, type=MAP, convertedtype=MAP, keytype=BYTE_ARRAY, keyconvertedtype=UTF8, valuetype=STRING"`
-	Val                       interface{} `parquet:"name=val, type=MAP, convertedtype=MAP, keytype=BYTE_ARRAY, keyconvertedtype=UTF8, valuetype=STRING"`
-	ValDecoded                interface{} `parquet:"name=val_decoded, type=MAP, convertedtype=MAP, keytype=BYTE_ARRAY, keyconvertedtype=UTF8, valuetype=STRING"`
+	Key                       string `parquet:"name=key, type=BYTE_ARRAY, convertedtype=UTF8"`
+	KeyDecoded                string `parquet:"name=key_decoded, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Val                       string `parquet:"name=val, type=BYTE_ARRAY, convertedtype=UTF8"`
+	ValDecoded                string `parquet:"name=val_decoded, type=BYTE_ARRAY, convertedtype=UTF8"`
 	ContractDataXDR           string      `parquet:"name=contract_data_xdr, type=BYTE_ARRAY, convertedtype=UTF8"`
 }
 

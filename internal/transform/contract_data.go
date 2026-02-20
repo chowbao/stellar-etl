@@ -1,6 +1,8 @@
 package transform
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"strings"
@@ -8,6 +10,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/ingest"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
+	"github.com/stellar/go-stellar-xdr-json/xdrjson"
 	"github.com/stellar/stellar-etl/v2/internal/utils"
 )
 
@@ -118,11 +121,11 @@ func (t *TransformContractDataStruct) TransformContractData(ledgerChange ingest.
 
 	ledgerSequence := header.Header.LedgerSeq
 
-	outputKey, outputKeyDecoded, err := serializeScVal(contractData.Key)
+	outputKey, outputKeyDecoded, err := serializeScValToString(contractData.Key)
 	if err != nil {
 		return ContractDataOutput{}, err, false
 	}
-	outputVal, outputValDecoded, err := serializeScVal(contractData.Val)
+	outputVal, outputValDecoded, err := serializeScValToString(contractData.Val)
 	if err != nil {
 		return ContractDataOutput{}, err, false
 	}
@@ -376,4 +379,33 @@ func ContractBalanceFromContractData(ledgerEntry xdr.LedgerEntry, passphrase str
 	amt := new(big.Int).Lsh(new(big.Int).SetInt64(int64(amount.Hi)), 64)
 	amt.Add(amt, new(big.Int).SetUint64(uint64(amount.Lo)))
 	return holder, amt, true
+}
+
+// serializeScValToString serializes an ScVal into string representations.
+// The first return value is the base64-encoded XDR binary.
+// The second return value is the JSON string representation of the decoded value.
+func serializeScValToString(scVal xdr.ScVal) (string, string, error) {
+	serializedData := "n/a"
+	serializedDataDecoded := "n/a"
+
+	if _, ok := scVal.ArmForSwitch(int32(scVal.Type)); ok {
+		raw, err := scVal.MarshalBinary()
+		if err != nil {
+			return "", "", err
+		}
+
+		serializedData = base64.StdEncoding.EncodeToString(raw)
+		jsonMessage, err := xdrjson.Decode(xdrjson.ScVal, raw)
+		if err != nil {
+			return "", "", err
+		}
+
+		jsonBytes, err := json.Marshal(jsonMessage)
+		if err != nil {
+			return "", "", err
+		}
+		serializedDataDecoded = string(jsonBytes)
+	}
+
+	return serializedData, serializedDataDecoded, nil
 }
