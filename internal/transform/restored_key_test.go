@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/guregu/null"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/stellar/go-stellar-sdk/ingest"
@@ -88,5 +89,6 @@ func makeRestoredKeyTestOutput() RestoredKeyOutput {
 		LastModifiedLedger: 30715263,
 		LedgerSequence:     10,
 		ClosedAt:           time.Date(1970, time.January, 1, 0, 16, 40, 0, time.UTC),
+		Sponsor:            null.StringFrom(testAccount3Address),
 	}
 }

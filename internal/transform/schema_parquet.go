@@ -156,6 +156,7 @@ type PoolOutputParquet struct {
 	Deleted            bool    `parquet:"name=deleted, type=BOOLEAN"`
 	ClosedAt           int64   `parquet:"name=closed_at, type=INT64, convertedtype=TIMESTAMP_MILLIS"`
 	LedgerSequence     int64   `parquet:"name=ledger_sequence, type=INT64, convertedtype=UINT_64"`
+	Sponsor            string  `parquet:"name=sponsor, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 }
 
 // AssetOutputParquet is a representation of an asset that aligns with the BigQuery table history_assets
@@ -278,6 +279,7 @@ type ContractDataOutputParquet struct {
 	Val                       interface{} `parquet:"name=val, type=MAP, convertedtype=MAP, keytype=BYTE_ARRAY, keyconvertedtype=UTF8, valuetype=STRING"`
 	ValDecoded                interface{} `parquet:"name=val_decoded, type=MAP, convertedtype=MAP, keytype=BYTE_ARRAY, keyconvertedtype=UTF8, valuetype=STRING"`
 	ContractDataXDR           string      `parquet:"name=contract_data_xdr, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Sponsor                   string      `parquet:"name=sponsor, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 }
 
 // ContractCodeOutputParquet is a representation of contract code that aligns with the Bigquery table soroban_contract_code
@@ -300,6 +302,7 @@ type ContractCodeOutputParquet struct {
 	NImports           int64  `parquet:"name=n_imports, type=INT64, convertedtype=UINT_64"`
 	NExports           int64  `parquet:"name=n_exports, type=INT64, convertedtype=UINT_64"`
 	NDataSegmentBytes  int64  `parquet:"name=n_data_segment_bytes, type=INT64, convertedtype=UINT_64"`
+	Sponsor            string `parquet:"name=sponsor, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 }
 
 // ConfigSettingOutputParquet is a representation of soroban config settings that aligns with the Bigquery table config_settings
@@ -377,6 +380,17 @@ type TtlOutputParquet struct {
 	Deleted            bool   `parquet:"name=deleted, type=BOOLEAN"`
 	ClosedAt           int64  `parquet:"name=closed_at, type=INT64, convertedtype=TIMESTAMP_MILLIS"`
 	LedgerSequence     int64  `parquet:"name=ledger_sequence, type=INT64, convertedtype=UINT_64"`
+	Sponsor            string `parquet:"name=sponsor, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
+}
+
+// RestoredKeyOutputParquet is a representation of a restored key that aligns with the BigQuery table restored_key
+type RestoredKeyOutputParquet struct {
+	LedgerKeyHash      string `parquet:"name=ledger_key_hash, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
+	LedgerEntryType    string `parquet:"name=ledger_entry_type, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
+	LastModifiedLedger int64  `parquet:"name=last_modified_ledger, type=INT64, convertedtype=UINT_64"`
+	ClosedAt           int64  `parquet:"name=closed_at, type=INT64, convertedtype=TIMESTAMP_MILLIS"`
+	LedgerSequence     int64  `parquet:"name=ledger_sequence, type=INT64, convertedtype=UINT_64"`
+	Sponsor            string `parquet:"name=sponsor, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 }
 
 // ContractEventOutputParquet is a representation of soroban contract events and diagnostic events

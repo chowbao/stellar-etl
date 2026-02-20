@@ -182,6 +182,7 @@ func (po PoolOutput) ToParquet() interface{} {
 		Deleted:            po.Deleted,
 		ClosedAt:           po.ClosedAt.UnixMilli(),
 		LedgerSequence:     int64(po.LedgerSequence),
+		Sponsor:            po.Sponsor.String,
 	}
 }
 
@@ -310,6 +311,7 @@ func (cdo ContractDataOutput) ToParquet() interface{} {
 		Val:                       cdo.Val,
 		ValDecoded:                cdo.ValDecoded,
 		ContractDataXDR:           cdo.ContractDataXDR,
+		Sponsor:                   cdo.Sponsor.String,
 	}
 }
 
@@ -333,6 +335,7 @@ func (cco ContractCodeOutput) ToParquet() interface{} {
 		NImports:           int64(cco.NImports),
 		NExports:           int64(cco.NExports),
 		NDataSegmentBytes:  int64(cco.NDataSegmentBytes),
+		Sponsor:            cco.Sponsor.String,
 	}
 }
 
@@ -419,6 +422,18 @@ func (to TtlOutput) ToParquet() interface{} {
 		Deleted:            to.Deleted,
 		ClosedAt:           to.ClosedAt.UnixMilli(),
 		LedgerSequence:     int64(to.LedgerSequence),
+		Sponsor:            to.Sponsor.String,
+	}
+}
+
+func (rko RestoredKeyOutput) ToParquet() interface{} {
+	return RestoredKeyOutputParquet{
+		LedgerKeyHash:      rko.LedgerKeyHash,
+		LedgerEntryType:    rko.LedgerEntryType,
+		LastModifiedLedger: int64(rko.LastModifiedLedger),
+		ClosedAt:           rko.ClosedAt.UnixMilli(),
+		LedgerSequence:     int64(rko.LedgerSequence),
+		Sponsor:            rko.Sponsor.String,
 	}
 }
 
