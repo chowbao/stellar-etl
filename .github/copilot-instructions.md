@@ -34,6 +34,7 @@ Data flows through three layers:
 1. **`cmd/`** — Cobra CLI commands (`export_ledgers`, `export_transactions`, etc.). Each command parses flags, calls the `input` package, loops over results calling `transform`, and writes output via `ExportEntry` (JSONL) or `WriteParquet`.
 
 2. **`internal/input/`** — Extracts raw Stellar ledger data. Supports two backends controlled by `--captive-core`:
+
    - **Default (datastore):** reads compressed `LedgerCloseMetaBatch` XDR files from a GCS bucket (populated by [Ledger Exporter](https://github.com/stellar/go/blob/master/exp/services/ledgerexporter/README.md)).
    - **Captive-core:** runs a local Stellar Core instance.
 
@@ -48,6 +49,7 @@ Data flows through three layers:
 ### Adding a new export command
 
 Four files are required (see README Extensions section):
+
 - `cmd/export_new_type.go` — Cobra command; follow the pattern in `export_ledgers.go`
 - `cmd/export_new_type_test.go` — Integration test using golden files in `testdata/`
 - `internal/input/new_type.go` — Data extraction logic
@@ -68,6 +70,7 @@ Four files are required (see README Extensions section):
 ### Branch naming
 
 Prefix branches by change type before opening a PR:
+
 - `major/<name>` — breaking changes
 - `minor/<name>` — new features
 - `patch/<name>` — bug fixes

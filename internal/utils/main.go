@@ -864,15 +864,6 @@ func ExtractEntryFromChange(change ingest.Change) (xdr.LedgerEntry, xdr.LedgerEn
 	}
 }
 
-// GetMostRecentCheckpoint returns the most recent checkpoint before the provided ledger
-func GetMostRecentCheckpoint(seq uint32) uint32 {
-	remainder := (seq + 1) % 64
-	if remainder == 0 {
-		return seq
-	}
-	return seq - remainder
-}
-
 type EnvironmentDetails struct {
 	NetworkPassphrase string
 	ArchiveURLs       []string
