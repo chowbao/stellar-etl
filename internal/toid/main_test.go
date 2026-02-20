@@ -139,5 +139,3 @@ func ExampleParse() {
 	fmt.Printf("ledger:%d, tx:%d, op:%d", toid.LedgerSequence, toid.TransactionOrder, toid.OperationOrder)
 	// Output: ledger:3, tx:2, op:0
 }
-
-
