@@ -528,10 +528,10 @@ type ContractDataOutput struct {
 	ClosedAt                  time.Time   `json:"closed_at"`
 	LedgerSequence            uint32      `json:"ledger_sequence"`
 	LedgerKeyHash             string      `json:"ledger_key_hash"`
-	Key                       interface{} `json:"key"`
-	KeyDecoded                interface{} `json:"key_decoded"`
-	Val                       interface{} `json:"val"`
-	ValDecoded                interface{} `json:"val_decoded"`
+	Key                       string `json:"key"`
+	KeyDecoded                string `json:"key_decoded"`
+	Val                       string `json:"val"`
+	ValDecoded                string `json:"val_decoded"`
 	ContractDataXDR           string      `json:"contract_data_xdr"`
 	LedgerKeyHashBase64       string      `json:"ledger_key_hash_base_64"`
 }

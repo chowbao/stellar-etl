@@ -1,7 +1,6 @@
 package transform
 
 import (
-	"encoding/json"
 	"fmt"
 	"math/big"
 	"testing"
@@ -131,13 +130,11 @@ func makeContractDataTestInput() []ingest.Change {
 }
 
 func makeContractDataTestOutput() []ContractDataOutput {
-	var key, keyDecoded interface{}
-	key = "AAAAEwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAABAAAADgAAAAFhAAAAAAAADgAAAAFhAAAA"
-	keyDecoded = json.RawMessage("{\"contract_instance\":{\"executable\":{\"wasm\":\"0000000000000000000000000000000000000000000000000000000000000000\"},\"storage\":[{\"key\":{\"string\":\"a\"},\"val\":{\"string\":\"a\"}}]}}")
+	key := "AAAAEwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAABAAAADgAAAAFhAAAAAAAADgAAAAFhAAAA"
+	keyDecoded := "{\"contract_instance\":{\"executable\":{\"wasm\":\"0000000000000000000000000000000000000000000000000000000000000000\"},\"storage\":[{\"key\":{\"string\":\"a\"},\"val\":{\"string\":\"a\"}}]}}"
 
-	var val, valDecoded interface{}
-	val = "AAAAAAAAAAE="
-	valDecoded = json.RawMessage("{\"bool\":true}")
+	val := "AAAAAAAAAAE="
+	valDecoded := "{\"bool\":true}"
 
 	return []ContractDataOutput{
 		{
