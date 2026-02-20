@@ -490,7 +490,7 @@ var EffectTypeNames = map[EffectType]string{
 type TradeEffectDetails struct {
 	Seller            string `json:"seller"`
 	SellerMuxed       string `json:"seller_muxed,omitempty"`
-	SellerMuxedID     uint64 `json:"seller_muxed_id,omitempty"`
+	SellerMuxedID     string `json:"seller_muxed_id,omitempty"`
 	OfferID           int64  `json:"offer_id"`
 	SoldAmount        string `json:"sold_amount"`
 	SoldAssetType     string `json:"sold_asset_type"`
