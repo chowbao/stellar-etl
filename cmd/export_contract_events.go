@@ -1,10 +1,17 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/stellar/go-stellar-sdk/ingest"
+	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
 	"github.com/stellar/stellar-etl/v2/internal/input"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
 	"github.com/stellar/stellar-etl/v2/internal/utils"
@@ -21,6 +28,66 @@ var contractEventsCmd = &cobra.Command{
 		// TODO: https://stellarorg.atlassian.net/browse/HUBBLE-386 GetEnvironmentDetails should be refactored
 		commonArgs := utils.MustCommonFlags(cmd.Flags(), cmdLogger)
 		env := utils.GetEnvironmentDetails(commonArgs)
+
+		if cmdArgs.EndNum == 0 {
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			backend, err := utils.CreateLedgerBackend(ctx, cmdArgs.UseCaptiveCore, env)
+			if err != nil {
+				cmdLogger.Fatal("could not create backend: ", err)
+			}
+
+			err = backend.PrepareRange(ctx, ledgerbackend.UnboundedRange(cmdArgs.StartNum))
+			if err != nil {
+				cmdLogger.Fatal("could not prepare range: ", err)
+			}
+
+			outFile := MustOutFile(cmdArgs.Path)
+			for seq := cmdArgs.StartNum; ctx.Err() == nil; seq++ {
+				lcm, err := backend.GetLedger(ctx, seq)
+				if ctx.Err() != nil {
+					break
+				}
+				if err != nil {
+					cmdLogger.Fatal("could not get ledger: ", err)
+				}
+
+				txReader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(env.NetworkPassphrase, lcm)
+				if err != nil {
+					cmdLogger.LogError(fmt.Errorf("could not create transaction reader for ledger %d: %s", seq, err))
+					continue
+				}
+
+				lhe := txReader.GetHeader()
+				for {
+					tx, err := txReader.Read()
+					if err == io.EOF {
+						break
+					}
+					if err != nil {
+						cmdLogger.LogError(fmt.Errorf("could not read transaction in ledger %d: %s", seq, err))
+						break
+					}
+
+					events, err := transform.TransformContractEvent(tx, lhe)
+					if err != nil {
+						cmdLogger.LogError(fmt.Errorf("could not transform contract events in ledger %d: %s", seq, err))
+						continue
+					}
+
+					for _, event := range events {
+						_, err = ExportEntry(event, outFile, cmdArgs.Extra)
+						if err != nil {
+							cmdLogger.LogError(fmt.Errorf("could not export contract event in ledger %d: %s", seq, err))
+						}
+					}
+				}
+				txReader.Close()
+			}
+			outFile.Close()
+			return
+		}
 
 		transactions, err := input.GetTransactions(cmdArgs.StartNum, cmdArgs.EndNum, cmdArgs.Limit, env, cmdArgs.UseCaptiveCore)
 		if err != nil {
@@ -75,5 +142,4 @@ func init() {
 	utils.AddCloudStorageFlags(contractEventsCmd.Flags())
 
 	contractEventsCmd.MarkFlagRequired("start-ledger")
-	contractEventsCmd.MarkFlagRequired("end-ledger")
 }

@@ -1,10 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
+	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stellar/stellar-etl/v2/internal/input"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
 	"github.com/stellar/stellar-etl/v2/internal/utils"
@@ -21,6 +27,58 @@ var assetsCmd = &cobra.Command{
 		startNum, path, parquetPath, limit := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
 		cloudStorageBucket, cloudCredentials, cloudProvider := utils.MustCloudStorageFlags(cmd.Flags(), cmdLogger)
 		env := utils.GetEnvironmentDetails(commonArgs)
+
+		if commonArgs.EndNum == 0 {
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			backend, err := utils.CreateLedgerBackend(ctx, commonArgs.UseCaptiveCore, env)
+			if err != nil {
+				cmdLogger.Fatal("could not create backend: ", err)
+			}
+
+			err = backend.PrepareRange(ctx, ledgerbackend.UnboundedRange(startNum))
+			if err != nil {
+				cmdLogger.Fatal("could not prepare range: ", err)
+			}
+
+			outFile := MustOutFile(path)
+			seenIDs := map[int64]bool{}
+			for seq := startNum; ctx.Err() == nil; seq++ {
+				lcm, err := backend.GetLedger(ctx, seq)
+				if ctx.Err() != nil {
+					break
+				}
+				if err != nil {
+					cmdLogger.Fatal("could not get ledger: ", err)
+				}
+
+				transactionSet := lcm.TransactionEnvelopes()
+				for txIndex, transaction := range transactionSet {
+					for opIndex, op := range transaction.Operations() {
+						if op.Body.Type == xdr.OperationTypePayment || op.Body.Type == xdr.OperationTypeManageSellOffer {
+							transformed, err := transform.TransformAsset(op, int32(opIndex), int32(txIndex), int32(seq), lcm)
+							if err != nil {
+								cmdLogger.LogError(fmt.Errorf("could not extract asset from operation %d in ledger %d: %s", opIndex, seq, err))
+								continue
+							}
+
+							if _, exists := seenIDs[transformed.AssetID]; exists {
+								continue
+							}
+							seenIDs[transformed.AssetID] = true
+
+							_, err = ExportEntry(transformed, outFile, commonArgs.Extra)
+							if err != nil {
+								cmdLogger.LogError(fmt.Errorf("could not export asset in ledger %d: %s", seq, err))
+							}
+						}
+					}
+				}
+			}
+			outFile.Close()
+			return
+		}
 
 		outFile := MustOutFile(path)
 
@@ -88,8 +146,6 @@ func init() {
 	utils.AddCommonFlags(assetsCmd.Flags())
 	utils.AddArchiveFlags("assets", assetsCmd.Flags())
 	utils.AddCloudStorageFlags(assetsCmd.Flags())
-	assetsCmd.MarkFlagRequired("end-ledger")
-
 	/*
 		Current flags:
 			start-ledger: the ledger sequence number for the beginning of the export period

@@ -1,9 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/sirupsen/logrus"
+	"github.com/stellar/go-stellar-sdk/ingest"
+	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
 	"github.com/stellar/stellar-etl/v2/internal/toid"
 
 	"github.com/spf13/cobra"
@@ -24,6 +31,76 @@ var tradesCmd = &cobra.Command{
 		startNum, path, parquetPath, limit := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
 		env := utils.GetEnvironmentDetails(commonArgs)
 		cloudStorageBucket, cloudCredentials, cloudProvider := utils.MustCloudStorageFlags(cmd.Flags(), cmdLogger)
+
+		if commonArgs.EndNum == 0 {
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			backend, err := utils.CreateLedgerBackend(ctx, commonArgs.UseCaptiveCore, env)
+			if err != nil {
+				cmdLogger.Fatal("could not create backend: ", err)
+			}
+
+			err = backend.PrepareRange(ctx, ledgerbackend.UnboundedRange(startNum))
+			if err != nil {
+				cmdLogger.Fatal("could not prepare range: ", err)
+			}
+
+			outFile := MustOutFile(path)
+			for seq := startNum; ctx.Err() == nil; seq++ {
+				lcm, err := backend.GetLedger(ctx, seq)
+				if ctx.Err() != nil {
+					break
+				}
+				if err != nil {
+					cmdLogger.Fatal("could not get ledger: ", err)
+				}
+
+				txReader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(env.NetworkPassphrase, lcm)
+				if err != nil {
+					cmdLogger.LogError(fmt.Errorf("could not create transaction reader for ledger %d: %s", seq, err))
+					continue
+				}
+
+				closeTime, _ := utils.TimePointToUTCTimeStamp(txReader.GetHeader().Header.ScpValue.CloseTime)
+				for {
+					tx, err := txReader.Read()
+					if err == io.EOF {
+						break
+					}
+					if err != nil {
+						cmdLogger.LogError(fmt.Errorf("could not read transaction in ledger %d: %s", seq, err))
+						break
+					}
+
+					for index, op := range tx.Envelope.Operations() {
+						if input.OperationResultsInTrade(op) && tx.Result.Successful() {
+							tradeInput := input.TradeTransformInput{
+								OperationIndex:     int32(index),
+								Transaction:        tx,
+								CloseTime:          closeTime,
+								OperationHistoryID: toid.New(int32(seq), int32(tx.Index), int32(index)).ToInt64(),
+							}
+							trades, err := transform.TransformTrade(tradeInput.OperationIndex, tradeInput.OperationHistoryID, tradeInput.Transaction, tradeInput.CloseTime)
+							if err != nil {
+								cmdLogger.LogError(fmt.Errorf("could not transform trade in ledger %d: %s", seq, err))
+								continue
+							}
+
+							for _, t := range trades {
+								_, err = ExportEntry(t, outFile, commonArgs.Extra)
+								if err != nil {
+									cmdLogger.LogError(fmt.Errorf("could not export trade in ledger %d: %s", seq, err))
+								}
+							}
+						}
+					}
+				}
+				txReader.Close()
+			}
+			outFile.Close()
+			return
+		}
 
 		trades, err := input.GetTrades(startNum, commonArgs.EndNum, limit, env, commonArgs.UseCaptiveCore)
 		if err != nil {
@@ -77,8 +154,6 @@ func init() {
 	utils.AddCommonFlags(tradesCmd.Flags())
 	utils.AddArchiveFlags("trades", tradesCmd.Flags())
 	utils.AddCloudStorageFlags(tradesCmd.Flags())
-	tradesCmd.MarkFlagRequired("end-ledger")
-
 	/*
 		TODO: implement extra flags if possible
 			serialize-method: the method for serialization of the output data (JSON, XDR, etc)

@@ -1,10 +1,15 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
 	"github.com/stellar/stellar-etl/v2/internal/input"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
 	"github.com/stellar/stellar-etl/v2/internal/utils"
@@ -21,6 +26,46 @@ var ledgersCmd = &cobra.Command{
 		startNum, path, parquetPath, limit := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
 		cloudStorageBucket, cloudCredentials, cloudProvider := utils.MustCloudStorageFlags(cmd.Flags(), cmdLogger)
 		env := utils.GetEnvironmentDetails(commonArgs)
+
+		if commonArgs.EndNum == 0 {
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			backend, err := utils.CreateLedgerBackend(ctx, commonArgs.UseCaptiveCore, env)
+			if err != nil {
+				cmdLogger.Fatal("could not create backend: ", err)
+			}
+
+			err = backend.PrepareRange(ctx, ledgerbackend.UnboundedRange(startNum))
+			if err != nil {
+				cmdLogger.Fatal("could not prepare range: ", err)
+			}
+
+			outFile := MustOutFile(path)
+			for seq := startNum; ctx.Err() == nil; seq++ {
+				lcm, err := backend.GetLedger(ctx, seq)
+				if ctx.Err() != nil {
+					break
+				}
+				if err != nil {
+					cmdLogger.Fatal("could not get ledger: ", err)
+				}
+
+				ledgerAndLCM := input.LCMToHistoryArchiveLedgerAndLCM(lcm)
+				transformed, err := transform.TransformLedger(ledgerAndLCM.Ledger, ledgerAndLCM.LCM)
+				if err != nil {
+					cmdLogger.LogError(fmt.Errorf("could not transform ledger %d: %s", seq, err))
+					continue
+				}
+
+				_, err = ExportEntry(transformed, outFile, commonArgs.Extra)
+				if err != nil {
+					cmdLogger.LogError(fmt.Errorf("could not export ledger %d: %s", seq, err))
+				}
+			}
+			outFile.Close()
+			return
+		}
 
 		var ledgers []utils.HistoryArchiveLedgerAndLCM
 		var err error
@@ -79,7 +124,6 @@ func init() {
 	utils.AddCommonFlags(ledgersCmd.Flags())
 	utils.AddArchiveFlags("ledgers", ledgersCmd.Flags())
 	utils.AddCloudStorageFlags(ledgersCmd.Flags())
-	ledgersCmd.MarkFlagRequired("end-ledger")
 	/*
 		Current flags:
 			start-ledger: the ledger sequence number for the beginning of the export period

@@ -1,10 +1,17 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/stellar/go-stellar-sdk/ingest"
+	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
 	"github.com/stellar/stellar-etl/v2/internal/input"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
 	"github.com/stellar/stellar-etl/v2/internal/utils"
@@ -21,6 +28,67 @@ var effectsCmd = &cobra.Command{
 		startNum, path, parquetPath, limit := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
 		cloudStorageBucket, cloudCredentials, cloudProvider := utils.MustCloudStorageFlags(cmd.Flags(), cmdLogger)
 		env := utils.GetEnvironmentDetails(commonArgs)
+
+		if commonArgs.EndNum == 0 {
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			backend, err := utils.CreateLedgerBackend(ctx, commonArgs.UseCaptiveCore, env)
+			if err != nil {
+				cmdLogger.Fatal("could not create backend: ", err)
+			}
+
+			err = backend.PrepareRange(ctx, ledgerbackend.UnboundedRange(startNum))
+			if err != nil {
+				cmdLogger.Fatal("could not prepare range: ", err)
+			}
+
+			outFile := MustOutFile(path)
+			for seq := startNum; ctx.Err() == nil; seq++ {
+				lcm, err := backend.GetLedger(ctx, seq)
+				if ctx.Err() != nil {
+					break
+				}
+				if err != nil {
+					cmdLogger.Fatal("could not get ledger: ", err)
+				}
+
+				txReader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(env.NetworkPassphrase, lcm)
+				if err != nil {
+					cmdLogger.LogError(fmt.Errorf("could not create transaction reader for ledger %d: %s", seq, err))
+					continue
+				}
+
+				lhe := txReader.GetHeader()
+				for {
+					tx, err := txReader.Read()
+					if err == io.EOF {
+						break
+					}
+					if err != nil {
+						cmdLogger.LogError(fmt.Errorf("could not read transaction in ledger %d: %s", seq, err))
+						break
+					}
+
+					LedgerSeq := uint32(lhe.Header.LedgerSeq)
+					effects, err := transform.TransformEffect(tx, LedgerSeq, lcm, env.NetworkPassphrase)
+					if err != nil {
+						cmdLogger.LogError(fmt.Errorf("could not transform effects in ledger %d: %s", seq, err))
+						continue
+					}
+
+					for _, e := range effects {
+						_, err = ExportEntry(e, outFile, commonArgs.Extra)
+						if err != nil {
+							cmdLogger.LogError(fmt.Errorf("could not export effect in ledger %d: %s", seq, err))
+						}
+					}
+				}
+				txReader.Close()
+			}
+			outFile.Close()
+			return
+		}
 
 		transactions, err := input.GetTransactions(startNum, commonArgs.EndNum, limit, env, commonArgs.UseCaptiveCore)
 		if err != nil {
@@ -75,7 +143,6 @@ func init() {
 	utils.AddCommonFlags(effectsCmd.Flags())
 	utils.AddArchiveFlags("effects", effectsCmd.Flags())
 	utils.AddCloudStorageFlags(effectsCmd.Flags())
-	effectsCmd.MarkFlagRequired("end-ledger")
 
 	/*
 		Current flags:

@@ -69,7 +69,7 @@ func GetAllHistory(start, end uint32, limit int64, env utils.EnvironmentDetails,
 				})
 
 				// Trades
-				if operationResultsInTrade(op) && tx.Result.Successful() {
+				if OperationResultsInTrade(op) && tx.Result.Successful() {
 					tradeSlice = append(tradeSlice, TradeTransformInput{
 						OperationIndex:     int32(index),
 						Transaction:        tx,
