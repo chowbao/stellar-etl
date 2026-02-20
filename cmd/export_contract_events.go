@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/stellar/stellar-etl/v2/internal/input"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
@@ -15,27 +14,24 @@ var contractEventsCmd = &cobra.Command{
 	Short: "Exports the contract events over a specified range.",
 	Long:  `Exports the contract events over a specified range to an output file.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		cmdLogger.SetLevel(logrus.InfoLevel)
+		commonArgs, env := SetupExportCommand(cmd)
 		cmdArgs := utils.MustFlags(cmd.Flags(), cmdLogger)
-
-		// TODO: https://stellarorg.atlassian.net/browse/HUBBLE-386 GetEnvironmentDetails should be refactored
-		commonArgs := utils.MustCommonFlags(cmd.Flags(), cmdLogger)
-		env := utils.GetEnvironmentDetails(commonArgs)
 
 		transactions, err := input.GetTransactions(cmdArgs.StartNum, cmdArgs.EndNum, cmdArgs.Limit, env, cmdArgs.UseCaptiveCore)
 		if err != nil {
-			cmdLogger.Fatal("could not read transactions: ", err)
+			cmdLogger.Fatalf("could not read transactions for contract events in [%d, %d] (limit=%d): %v", cmdArgs.StartNum, cmdArgs.EndNum, cmdArgs.Limit, err)
 		}
 
 		outFile := MustOutFile(cmdArgs.Path)
-		numFailures := 0
-		var transformedEvents []transform.SchemaParquet
+		defer CloseFile(outFile)
+
+		results := ExportResults{NumAttempts: len(transactions)}
 		for _, transformInput := range transactions {
 			transformed, err := transform.TransformContractEvent(transformInput.Transaction, transformInput.LedgerHistory)
 			if err != nil {
 				ledgerSeq := transformInput.LedgerHistory.Header.LedgerSeq
-				cmdLogger.LogError(fmt.Errorf("could not transform contract events in transaction %d in ledger %d: ", transformInput.Transaction.Index, ledgerSeq))
-				numFailures += 1
+				cmdLogger.LogError(fmt.Errorf("could not transform contract events in transaction %d in ledger %d: %v", transformInput.Transaction.Index, ledgerSeq, err))
+				results.NumFailures++
 				continue
 			}
 
@@ -43,28 +39,17 @@ var contractEventsCmd = &cobra.Command{
 				_, err := ExportEntry(contractEvent, outFile, cmdArgs.Extra)
 				if err != nil {
 					cmdLogger.LogError(fmt.Errorf("could not export contract event: %v", err))
-					numFailures += 1
+					results.NumFailures++
 					continue
 				}
 
 				if commonArgs.WriteParquet {
-					transformedEvents = append(transformedEvents, contractEvent)
+					results.Parquet = append(results.Parquet, contractEvent)
 				}
 			}
-
 		}
 
-		outFile.Close()
-
-		PrintTransformStats(len(transactions), numFailures)
-
-		MaybeUpload(cmdArgs.Credentials, cmdArgs.Bucket, cmdArgs.Provider, cmdArgs.Path)
-
-		if commonArgs.WriteParquet {
-			WriteParquet(transformedEvents, cmdArgs.ParquetPath, new(transform.ContractEventOutputParquet))
-			MaybeUpload(cmdArgs.Credentials, cmdArgs.Bucket, cmdArgs.Provider, cmdArgs.ParquetPath)
-		}
-
+		FinishExport(results, cmdArgs.Credentials, cmdArgs.Bucket, cmdArgs.Provider, cmdArgs.Path, cmdArgs.ParquetPath, commonArgs.WriteParquet, new(transform.ContractEventOutputParquet))
 	},
 }
 
