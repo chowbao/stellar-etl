@@ -87,7 +87,7 @@ func init() {
 
 	getLedgerRangeFromTimesCmd.Flags().StringP("start-time", "s", "", "The start time")
 	getLedgerRangeFromTimesCmd.Flags().StringP("end-time", "e", "", "The end time")
-	getLedgerRangeFromTimesCmd.Flags().StringP("output", "o", "exported_range.txt", "Filename of the output file")
+	getLedgerRangeFromTimesCmd.Flags().StringP("output", "o", "exported_range.json", "Filename of the output file")
 	getLedgerRangeFromTimesCmd.Flags().Bool("testnet", false, "If set, the batch job will connect to testnet instead of mainnet.")
 	getLedgerRangeFromTimesCmd.Flags().Bool("futurenet", false, "If set, the batch job will connect to futurenet instead of mainnet.")
 
