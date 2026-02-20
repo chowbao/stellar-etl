@@ -221,7 +221,8 @@ type PoolOutput struct {
 	Deleted            bool      `json:"deleted"`
 	ClosedAt           time.Time `json:"closed_at"`
 	LedgerSequence     uint32    `json:"ledger_sequence"`
-	PoolIDStrkey       string    `json:"liquidity_pool_id_strkey"`
+	PoolIDStrkey       string      `json:"liquidity_pool_id_strkey"`
+	Sponsor            null.String `json:"sponsor"`
 }
 
 // AssetOutput is a representation of an asset that aligns with the BigQuery table history_assets
@@ -534,6 +535,7 @@ type ContractDataOutput struct {
 	ValDecoded                interface{} `json:"val_decoded"`
 	ContractDataXDR           string      `json:"contract_data_xdr"`
 	LedgerKeyHashBase64       string      `json:"ledger_key_hash_base_64"`
+	Sponsor                   null.String `json:"sponsor"`
 }
 
 // ContractCodeOutput is a representation of contract code that aligns with the Bigquery table soroban_contract_code
@@ -556,8 +558,9 @@ type ContractCodeOutput struct {
 	NElemSegments       uint32 `json:"n_elem_segments"`
 	NImports            uint32 `json:"n_imports"`
 	NExports            uint32 `json:"n_exports"`
-	NDataSegmentBytes   uint32 `json:"n_data_segment_bytes"`
-	LedgerKeyHashBase64 string `json:"ledger_key_hash_base_64"`
+	NDataSegmentBytes   uint32      `json:"n_data_segment_bytes"`
+	LedgerKeyHashBase64 string      `json:"ledger_key_hash_base_64"`
+	Sponsor             null.String `json:"sponsor"`
 }
 
 // ConfigSettingOutput is a representation of soroban config settings that aligns with the Bigquery table config_settings
@@ -633,8 +636,9 @@ type TtlOutput struct {
 	LastModifiedLedger uint32    `json:"last_modified_ledger"`
 	LedgerEntryChange  uint32    `json:"ledger_entry_change"`
 	Deleted            bool      `json:"deleted"`
-	ClosedAt           time.Time `json:"closed_at"`
-	LedgerSequence     uint32    `json:"ledger_sequence"`
+	ClosedAt           time.Time   `json:"closed_at"`
+	LedgerSequence     uint32      `json:"ledger_sequence"`
+	Sponsor            null.String `json:"sponsor"`
 }
 
 // ContractEventOutput is a representation of soroban contract events and diagnostic events
@@ -681,6 +685,7 @@ type RestoredKeyOutput struct {
 	LedgerKeyHash      string    `json:"ledger_key_hash"`
 	LedgerEntryType    string    `json:"ledger_entry_type"`
 	LastModifiedLedger uint32    `json:"last_modified_ledger"`
-	ClosedAt           time.Time `json:"closed_at"`
-	LedgerSequence     uint32    `json:"ledger_sequence"`
+	ClosedAt           time.Time   `json:"closed_at"`
+	LedgerSequence     uint32      `json:"ledger_sequence"`
+	Sponsor            null.String `json:"sponsor"`
 }

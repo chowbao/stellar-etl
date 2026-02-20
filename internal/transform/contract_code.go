@@ -82,6 +82,7 @@ func TransformContractCode(ledgerChange ingest.Change, header xdr.LedgerHeaderHi
 		LastModifiedLedger:  uint32(ledgerEntry.LastModifiedLedgerSeq),
 		LedgerEntryChange:   uint32(changeType),
 		Deleted:             outputDeleted,
+		Sponsor:             ledgerEntrySponsorToNullString(ledgerEntry),
 		ClosedAt:            closedAt,
 		LedgerSequence:      uint32(ledgerSequence),
 		LedgerKeyHash:       ledgerKeyHash,

@@ -144,6 +144,7 @@ func (t *TransformContractDataStruct) TransformContractData(ledgerChange ingest.
 		LastModifiedLedger:        uint32(ledgerEntry.LastModifiedLedgerSeq),
 		LedgerEntryChange:         uint32(changeType),
 		Deleted:                   outputDeleted,
+		Sponsor:                   ledgerEntrySponsorToNullString(ledgerEntry),
 		ClosedAt:                  closedAt,
 		LedgerSequence:            uint32(ledgerSequence),
 		LedgerKeyHash:             ledgerKeyHash,
