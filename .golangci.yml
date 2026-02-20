@@ -1,14 +1,21 @@
 version: "2"
 linters:
   default: none
-  disable:
-    - errcheck
-    - ineffassign
-    - staticcheck
-
   enable:
+    - errcheck # Checks for unchecked errors.
+    - govet # Reports suspicious constructs.
+    - staticcheck # A set of rules from staticcheck.
+    - ineffassign # Detects when assignments to existing variables are not used.
+    - unconvert # Removes unnecessary type conversions.
     - importas # Enforces consistent import aliases.
     - misspell # Finds commonly misspelled English words.
+
+linters-settings:
+  errcheck:
+    exclude-functions:
+      - (*os.File).Close
+      - (*bufio.Writer).Flush
+      - (io.Closer).Close
 
 formatters:
   enable:

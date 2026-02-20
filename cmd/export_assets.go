@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/stellar/stellar-etl/v2/internal/input"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
@@ -15,14 +14,9 @@ var assetsCmd = &cobra.Command{
 	Short: "Exports the assets data over a specified range",
 	Long:  `Exports the assets that are created from payment operations over a specified ledger range`,
 	Run: func(cmd *cobra.Command, args []string) {
-		cmdLogger.SetLevel(logrus.InfoLevel)
-		commonArgs := utils.MustCommonFlags(cmd.Flags(), cmdLogger)
-		cmdLogger.StrictExport = commonArgs.StrictExport
+		commonArgs, env := SetupExportCommand(cmd)
 		startNum, path, parquetPath, limit := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
 		cloudStorageBucket, cloudCredentials, cloudProvider := utils.MustCloudStorageFlags(cmd.Flags(), cmdLogger)
-		env := utils.GetEnvironmentDetails(commonArgs)
-
-		outFile := MustOutFile(path)
 
 		var paymentOps []input.AssetTransformInput
 		var err error
@@ -33,20 +27,21 @@ var assetsCmd = &cobra.Command{
 			paymentOps, err = input.GetPaymentOperations(startNum, commonArgs.EndNum, limit, env, commonArgs.UseCaptiveCore)
 		}
 		if err != nil {
-			cmdLogger.Fatal("could not read asset: ", err)
+			cmdLogger.Fatalf("could not read assets in [%d, %d] (limit=%d): %v", startNum, commonArgs.EndNum, limit, err)
 		}
+
+		outFile := MustOutFile(path)
+		defer CloseFile(outFile)
 
 		// With seenIDs, the code doesn't export duplicate assets within a single export. Note that across exports, assets may be duplicated
 		seenIDs := map[int64]bool{}
-		numFailures := 0
-		totalNumBytes := 0
-		var transformedAssets []transform.SchemaParquet
+		results := ExportResults{NumAttempts: len(paymentOps)}
 		for _, transformInput := range paymentOps {
 			transformed, err := transform.TransformAsset(transformInput.Operation, transformInput.OperationIndex, transformInput.TransactionIndex, transformInput.LedgerSeqNum, transformInput.LedgerCloseMeta)
 			if err != nil {
 				txIndex := transformInput.TransactionIndex
-				cmdLogger.LogError(fmt.Errorf("could not extract asset from operation %d in transaction %d in ledger %d: ", transformInput.OperationIndex, txIndex, transformInput.LedgerSeqNum))
-				numFailures += 1
+				cmdLogger.LogError(fmt.Errorf("could not extract asset from operation %d in transaction %d in ledger %d: %v", transformInput.OperationIndex, txIndex, transformInput.LedgerSeqNum, err))
+				results.NumFailures++
 				continue
 			}
 
@@ -58,28 +53,18 @@ var assetsCmd = &cobra.Command{
 			seenIDs[transformed.AssetID] = true
 			numBytes, err := ExportEntry(transformed, outFile, commonArgs.Extra)
 			if err != nil {
-				cmdLogger.LogError(err)
-				numFailures += 1
+				cmdLogger.LogError(fmt.Errorf("could not export asset: %v", err))
+				results.NumFailures++
 				continue
 			}
-			totalNumBytes += numBytes
+			results.TotalNumBytes += numBytes
 
 			if commonArgs.WriteParquet {
-				transformedAssets = append(transformedAssets, transformed)
+				results.Parquet = append(results.Parquet, transformed)
 			}
 		}
 
-		outFile.Close()
-		cmdLogger.Infof("%d bytes written to %s", totalNumBytes, outFile.Name())
-
-		PrintTransformStats(len(paymentOps), numFailures)
-
-		MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
-
-		if commonArgs.WriteParquet {
-			WriteParquet(transformedAssets, parquetPath, new(transform.AssetOutputParquet))
-			MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, parquetPath)
-		}
+		FinishExport(results, cloudCredentials, cloudStorageBucket, cloudProvider, path, parquetPath, commonArgs.WriteParquet, new(transform.AssetOutputParquet))
 	},
 }
 

@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/stellar/stellar-etl/v2/internal/input"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
@@ -15,45 +14,38 @@ var ledgerTransactionCmd = &cobra.Command{
 	Short: "Exports the ledger_transaction transaction data over a specified range.",
 	Long:  `Exports the ledger_transaction transaction data over a specified range to an output file.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		cmdLogger.SetLevel(logrus.InfoLevel)
-		commonArgs := utils.MustCommonFlags(cmd.Flags(), cmdLogger)
-		cmdLogger.StrictExport = commonArgs.StrictExport
+		commonArgs, env := SetupExportCommand(cmd)
 		startNum, path, _, limit := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
 		cloudStorageBucket, cloudCredentials, cloudProvider := utils.MustCloudStorageFlags(cmd.Flags(), cmdLogger)
-		env := utils.GetEnvironmentDetails(commonArgs)
 
 		ledgerTransaction, err := input.GetTransactions(startNum, commonArgs.EndNum, limit, env, commonArgs.UseCaptiveCore)
 		if err != nil {
-			cmdLogger.Fatal("could not read ledger_transaction: ", err)
+			cmdLogger.Fatalf("could not read ledger transactions in [%d, %d] (limit=%d): %v", startNum, commonArgs.EndNum, limit, err)
 		}
 
 		outFile := MustOutFile(path)
-		numFailures := 0
-		totalNumBytes := 0
+		defer CloseFile(outFile)
+
+		results := ExportResults{NumAttempts: len(ledgerTransaction)}
 		for _, transformInput := range ledgerTransaction {
 			transformed, err := transform.TransformLedgerTransaction(transformInput.Transaction, transformInput.LedgerHistory)
 			if err != nil {
 				ledgerSeq := transformInput.LedgerHistory.Header.LedgerSeq
-				cmdLogger.LogError(fmt.Errorf("could not transform ledger_transaction transaction %d in ledger %d: ", transformInput.Transaction.Index, ledgerSeq))
-				numFailures += 1
+				cmdLogger.LogError(fmt.Errorf("could not transform ledger_transaction %d in ledger %d: %v", transformInput.Transaction.Index, ledgerSeq, err))
+				results.NumFailures++
 				continue
 			}
 
 			numBytes, err := ExportEntry(transformed, outFile, commonArgs.Extra)
 			if err != nil {
-				cmdLogger.LogError(fmt.Errorf("could not export transaction: %v", err))
-				numFailures += 1
+				cmdLogger.LogError(fmt.Errorf("could not export ledger transaction: %v", err))
+				results.NumFailures++
 				continue
 			}
-			totalNumBytes += numBytes
+			results.TotalNumBytes += numBytes
 		}
 
-		outFile.Close()
-		cmdLogger.Info("Number of bytes written: ", totalNumBytes)
-
-		PrintTransformStats(len(ledgerTransaction), numFailures)
-
-		MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
+		FinishExport(results, cloudCredentials, cloudStorageBucket, cloudProvider, path, "", false, nil)
 	},
 }
 

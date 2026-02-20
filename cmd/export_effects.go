@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/stellar/stellar-etl/v2/internal/input"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
@@ -15,12 +14,9 @@ var effectsCmd = &cobra.Command{
 	Short: "Exports the effects data over a specified range",
 	Long:  "Exports the effects data over a specified range to an output file.",
 	Run: func(cmd *cobra.Command, args []string) {
-		cmdLogger.SetLevel(logrus.InfoLevel)
-		commonArgs := utils.MustCommonFlags(cmd.Flags(), cmdLogger)
-		cmdLogger.StrictExport = commonArgs.StrictExport
+		commonArgs, env := SetupExportCommand(cmd)
 		startNum, path, parquetPath, limit := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
 		cloudStorageBucket, cloudCredentials, cloudProvider := utils.MustCloudStorageFlags(cmd.Flags(), cmdLogger)
-		env := utils.GetEnvironmentDetails(commonArgs)
 
 		transactions, err := input.GetTransactions(startNum, commonArgs.EndNum, limit, env, commonArgs.UseCaptiveCore)
 		if err != nil {
@@ -28,45 +24,35 @@ var effectsCmd = &cobra.Command{
 		}
 
 		outFile := MustOutFile(path)
-		numFailures := 0
-		totalNumBytes := 0
-		var transformedEffects []transform.SchemaParquet
+		defer CloseFile(outFile)
+
+		results := ExportResults{NumAttempts: len(transactions)}
 		for _, transformInput := range transactions {
 			LedgerSeq := uint32(transformInput.LedgerHistory.Header.LedgerSeq)
 			effects, err := transform.TransformEffect(transformInput.Transaction, LedgerSeq, transformInput.LedgerCloseMeta, env.NetworkPassphrase)
 			if err != nil {
 				txIndex := transformInput.Transaction.Index
-				cmdLogger.LogError(fmt.Errorf("could not transform transaction %d in ledger %d: %v", txIndex, LedgerSeq, err))
-				numFailures += 1
+				cmdLogger.LogError(fmt.Errorf("could not transform effects for transaction %d in ledger %d: %v", txIndex, LedgerSeq, err))
+				results.NumFailures++
 				continue
 			}
 
 			for _, transformed := range effects {
 				numBytes, err := ExportEntry(transformed, outFile, commonArgs.Extra)
 				if err != nil {
-					cmdLogger.LogError(err)
-					numFailures += 1
+					cmdLogger.LogError(fmt.Errorf("could not export effect: %v", err))
+					results.NumFailures++
 					continue
 				}
-				totalNumBytes += numBytes
+				results.TotalNumBytes += numBytes
 
 				if commonArgs.WriteParquet {
-					transformedEffects = append(transformedEffects, transformed)
+					results.Parquet = append(results.Parquet, transformed)
 				}
 			}
 		}
 
-		outFile.Close()
-		cmdLogger.Info("Number of bytes written: ", totalNumBytes)
-
-		PrintTransformStats(len(transactions), numFailures)
-
-		MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
-
-		if commonArgs.WriteParquet {
-			WriteParquet(transformedEffects, parquetPath, new(transform.EffectOutputParquet))
-			MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, parquetPath)
-		}
+		FinishExport(results, cloudCredentials, cloudStorageBucket, cloudProvider, path, parquetPath, commonArgs.WriteParquet, new(transform.EffectOutputParquet))
 	},
 }
 

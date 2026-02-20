@@ -7,7 +7,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/sirupsen/logrus"
+	"github.com/spf13/cobra"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
+	"github.com/stellar/stellar-etl/v2/internal/utils"
 	"github.com/xitongsys/parquet-go-source/local"
 	"github.com/xitongsys/parquet-go/writer"
 )
@@ -56,15 +59,14 @@ func ExportEntry(entry interface{}, outFile *os.File, extra map[string]string) (
 	// This extra marshalling/unmarshalling is silly, but it's required to properly handle the null.[String|Int*] types, and add the extra fields.
 	m, err := json.Marshal(entry)
 	if err != nil {
-		cmdLogger.Errorf("Error marshalling %+v: %v ", entry, err)
+		return 0, fmt.Errorf("error marshalling entry: %v", err)
 	}
 	i := map[string]interface{}{}
 	// Use a decoder here so that 'UseNumber' ensures large ints are properly decoded
 	decoder := json.NewDecoder(bytes.NewReader(m))
 	decoder.UseNumber()
-	err = decoder.Decode(&i)
-	if err != nil {
-		cmdLogger.Errorf("Error unmarshalling %+v: %v ", i, err)
+	if err = decoder.Decode(&i); err != nil {
+		return 0, fmt.Errorf("error unmarshalling entry: %v", err)
 	}
 	for k, v := range extra {
 		i[k] = v
@@ -72,18 +74,56 @@ func ExportEntry(entry interface{}, outFile *os.File, extra map[string]string) (
 
 	marshalled, err := json.Marshal(i)
 	if err != nil {
-		return 0, fmt.Errorf("could not json encode %+v: %s", entry, err)
+		return 0, fmt.Errorf("could not json encode entry: %v", err)
 	}
 	cmdLogger.Debugf("Writing entry to %s", outFile.Name())
 	numBytes, err := outFile.Write(marshalled)
 	if err != nil {
-		cmdLogger.Errorf("Error writing %+v to file: %s", entry, err)
+		return 0, fmt.Errorf("error writing entry to file: %v", err)
 	}
 	newLineNumBytes, err := outFile.WriteString("\n")
 	if err != nil {
-		cmdLogger.Errorf("Error writing new line to file %s: %s", outFile.Name(), err)
+		return 0, fmt.Errorf("error writing newline to file %s: %v", outFile.Name(), err)
 	}
 	return numBytes + newLineNumBytes, nil
+}
+
+// SetupExportCommand initializes logging from the command's flags and returns common flag values and environment details.
+func SetupExportCommand(cmd *cobra.Command) (utils.CommonFlagValues, utils.EnvironmentDetails) {
+	cmdLogger.SetLevel(logrus.InfoLevel)
+	commonArgs := utils.MustCommonFlags(cmd.Flags(), cmdLogger)
+	cmdLogger.StrictExport = commonArgs.StrictExport
+	env := utils.GetEnvironmentDetails(commonArgs)
+	return commonArgs, env
+}
+
+// CloseFile closes a file and logs any error encountered.
+func CloseFile(f *os.File) {
+	if err := f.Close(); err != nil {
+		cmdLogger.Errorf("error closing file %s: %v", f.Name(), err)
+	}
+}
+
+// ExportResults holds the common output state from an export loop.
+type ExportResults struct {
+	NumAttempts   int
+	NumFailures   int
+	TotalNumBytes int
+	Parquet       []transform.SchemaParquet
+}
+
+// FinishExport handles the common post-loop work: logging byte count,
+// printing transform stats, uploading the JSON file, and optionally
+// writing + uploading the parquet file.
+func FinishExport(results ExportResults, cloudCredentials, cloudStorageBucket, cloudProvider, path, parquetPath string, writeParquet bool, parquetSchema interface{}) {
+	cmdLogger.Info("Number of bytes written: ", results.TotalNumBytes)
+	PrintTransformStats(results.NumAttempts, results.NumFailures)
+	MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
+
+	if writeParquet && parquetSchema != nil {
+		WriteParquet(results.Parquet, parquetPath, parquetSchema)
+		MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, parquetPath)
+	}
 }
 
 // Prints the number of attempted, failed, and successful transformations as a JSON object

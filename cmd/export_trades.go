@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/sirupsen/logrus"
 	"github.com/stellar/stellar-etl/v2/internal/toid"
 
 	"github.com/spf13/cobra"
@@ -18,57 +17,44 @@ var tradesCmd = &cobra.Command{
 	Short: "Exports the trade data",
 	Long:  `Exports trade data within the specified range to an output file`,
 	Run: func(cmd *cobra.Command, args []string) {
-		cmdLogger.SetLevel(logrus.InfoLevel)
-		commonArgs := utils.MustCommonFlags(cmd.Flags(), cmdLogger)
-		cmdLogger.StrictExport = commonArgs.StrictExport
+		commonArgs, env := SetupExportCommand(cmd)
 		startNum, path, parquetPath, limit := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
-		env := utils.GetEnvironmentDetails(commonArgs)
 		cloudStorageBucket, cloudCredentials, cloudProvider := utils.MustCloudStorageFlags(cmd.Flags(), cmdLogger)
 
 		trades, err := input.GetTrades(startNum, commonArgs.EndNum, limit, env, commonArgs.UseCaptiveCore)
 		if err != nil {
-			cmdLogger.Fatal("could not read trades ", err)
+			cmdLogger.Fatalf("could not read trades in [%d, %d] (limit=%d): %v", startNum, commonArgs.EndNum, limit, err)
 		}
 
 		outFile := MustOutFile(path)
-		numFailures := 0
-		totalNumBytes := 0
-		var transformedTrades []transform.SchemaParquet
+		defer CloseFile(outFile)
+
+		results := ExportResults{NumAttempts: len(trades)}
 		for _, tradeInput := range trades {
 			trades, err := transform.TransformTrade(tradeInput.OperationIndex, tradeInput.OperationHistoryID, tradeInput.Transaction, tradeInput.CloseTime)
 			if err != nil {
 				parsedID := toid.Parse(tradeInput.OperationHistoryID)
-				cmdLogger.LogError(fmt.Errorf("from ledger %d, transaction %d, operation %d: %v", parsedID.LedgerSequence, parsedID.TransactionOrder, parsedID.OperationOrder, err))
-				numFailures += 1
+				cmdLogger.LogError(fmt.Errorf("could not transform trade from ledger %d, transaction %d, operation %d: %v", parsedID.LedgerSequence, parsedID.TransactionOrder, parsedID.OperationOrder, err))
+				results.NumFailures++
 				continue
 			}
 
 			for _, transformed := range trades {
 				numBytes, err := ExportEntry(transformed, outFile, commonArgs.Extra)
 				if err != nil {
-					cmdLogger.LogError(err)
-					numFailures += 1
+					cmdLogger.LogError(fmt.Errorf("could not export trade: %v", err))
+					results.NumFailures++
 					continue
 				}
-				totalNumBytes += numBytes
+				results.TotalNumBytes += numBytes
 
 				if commonArgs.WriteParquet {
-					transformedTrades = append(transformedTrades, transformed)
+					results.Parquet = append(results.Parquet, transformed)
 				}
 			}
 		}
 
-		outFile.Close()
-		cmdLogger.Info("Number of bytes written: ", totalNumBytes)
-
-		PrintTransformStats(len(trades), numFailures)
-
-		MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
-
-		if commonArgs.WriteParquet {
-			MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, parquetPath)
-			WriteParquet(transformedTrades, parquetPath, new(transform.TradeOutputParquet))
-		}
+		FinishExport(results, cloudCredentials, cloudStorageBucket, cloudProvider, path, parquetPath, commonArgs.WriteParquet, new(transform.TradeOutputParquet))
 	},
 }
 

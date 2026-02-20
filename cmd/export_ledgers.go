@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/stellar/stellar-etl/v2/internal/input"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
@@ -15,12 +14,9 @@ var ledgersCmd = &cobra.Command{
 	Short: "Exports the ledger data.",
 	Long:  `Exports ledger data within the specified range to an output file. Encodes ledgers as JSON objects and exports them to the output file.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		cmdLogger.SetLevel(logrus.InfoLevel)
-		commonArgs := utils.MustCommonFlags(cmd.Flags(), cmdLogger)
-		cmdLogger.StrictExport = commonArgs.StrictExport
+		commonArgs, env := SetupExportCommand(cmd)
 		startNum, path, parquetPath, limit := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
 		cloudStorageBucket, cloudCredentials, cloudProvider := utils.MustCloudStorageFlags(cmd.Flags(), cmdLogger)
-		env := utils.GetEnvironmentDetails(commonArgs)
 
 		var ledgers []utils.HistoryArchiveLedgerAndLCM
 		var err error
@@ -31,46 +27,35 @@ var ledgersCmd = &cobra.Command{
 			ledgers, err = input.GetLedgers(startNum, commonArgs.EndNum, limit, env, commonArgs.UseCaptiveCore)
 		}
 		if err != nil {
-			cmdLogger.Fatal("could not read ledgers: ", err)
+			cmdLogger.Fatalf("could not read ledgers in [%d, %d] (limit=%d): %v", startNum, commonArgs.EndNum, limit, err)
 		}
 
 		outFile := MustOutFile(path)
+		defer CloseFile(outFile)
 
-		numFailures := 0
-		totalNumBytes := 0
-		var transformedLedgers []transform.SchemaParquet
+		results := ExportResults{NumAttempts: len(ledgers)}
 		for i, ledger := range ledgers {
 			transformed, err := transform.TransformLedger(ledger.Ledger, ledger.LCM)
 			if err != nil {
-				cmdLogger.LogError(fmt.Errorf("could not json transform ledger %d: %s", startNum+uint32(i), err))
-				numFailures += 1
+				cmdLogger.LogError(fmt.Errorf("could not transform ledger %d: %v", startNum+uint32(i), err))
+				results.NumFailures++
 				continue
 			}
 
 			numBytes, err := ExportEntry(transformed, outFile, commonArgs.Extra)
 			if err != nil {
-				cmdLogger.LogError(fmt.Errorf("could not export ledger %d: %s", startNum+uint32(i), err))
-				numFailures += 1
+				cmdLogger.LogError(fmt.Errorf("could not export ledger %d: %v", startNum+uint32(i), err))
+				results.NumFailures++
 				continue
 			}
-			totalNumBytes += numBytes
+			results.TotalNumBytes += numBytes
 
 			if commonArgs.WriteParquet {
-				transformedLedgers = append(transformedLedgers, transformed)
+				results.Parquet = append(results.Parquet, transformed)
 			}
 		}
 
-		outFile.Close()
-		cmdLogger.Info("Number of bytes written: ", totalNumBytes)
-
-		PrintTransformStats(len(ledgers), numFailures)
-
-		MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
-
-		if commonArgs.WriteParquet {
-			MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, parquetPath)
-			WriteParquet(transformedLedgers, parquetPath, new(transform.LedgerOutputParquet))
-		}
+		FinishExport(results, cloudCredentials, cloudStorageBucket, cloudProvider, path, parquetPath, commonArgs.WriteParquet, new(transform.LedgerOutputParquet))
 	},
 }
 
