@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stellar/stellar-etl/v2/internal/input"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
 	"github.com/stellar/stellar-etl/v2/internal/utils"
@@ -18,58 +20,46 @@ var ledgersCmd = &cobra.Command{
 		cmdLogger.SetLevel(logrus.InfoLevel)
 		commonArgs := utils.MustCommonFlags(cmd.Flags(), cmdLogger)
 		cmdLogger.StrictExport = commonArgs.StrictExport
-		startNum, path, parquetPath, limit := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
+		startNum, path, parquetPath, _ := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
 		cloudStorageBucket, cloudCredentials, cloudProvider := utils.MustCloudStorageFlags(cmd.Flags(), cmdLogger)
 		env := utils.GetEnvironmentDetails(commonArgs)
 
-		var ledgers []utils.HistoryArchiveLedgerAndLCM
-		var err error
-
-		if commonArgs.UseCaptiveCore {
-			ledgers, err = input.GetLedgersHistoryArchive(startNum, commonArgs.EndNum, limit, env, commonArgs.UseCaptiveCore)
-		} else {
-			ledgers, err = input.GetLedgers(startNum, commonArgs.EndNum, limit, env, commonArgs.UseCaptiveCore)
-		}
-		if err != nil {
-			cmdLogger.Fatal("could not read ledgers: ", err)
-		}
-
-		outFile := MustOutFile(path)
-
 		numFailures := 0
 		totalNumBytes := 0
+		attempts := 0
 		var transformedLedgers []transform.SchemaParquet
-		for i, ledger := range ledgers {
-			transformed, err := transform.TransformLedger(ledger.Ledger, ledger.LCM)
+
+		StreamLedgers(startNum, commonArgs.EndNum, path, commonArgs.UseCaptiveCore, env, func(seq uint32, lcm xdr.LedgerCloseMeta, outFile *os.File) {
+			attempts++
+			ledgerAndLCM := input.LCMToHistoryArchiveLedgerAndLCM(lcm)
+			transformed, err := transform.TransformLedger(ledgerAndLCM.Ledger, ledgerAndLCM.LCM)
 			if err != nil {
-				cmdLogger.LogError(fmt.Errorf("could not json transform ledger %d: %s", startNum+uint32(i), err))
-				numFailures += 1
-				continue
+				cmdLogger.LogError(fmt.Errorf("could not transform ledger %d: %s", seq, err))
+				numFailures++
+				return
 			}
 
 			numBytes, err := ExportEntry(transformed, outFile, commonArgs.Extra)
 			if err != nil {
-				cmdLogger.LogError(fmt.Errorf("could not export ledger %d: %s", startNum+uint32(i), err))
-				numFailures += 1
-				continue
+				cmdLogger.LogError(fmt.Errorf("could not export ledger %d: %s", seq, err))
+				numFailures++
+				return
 			}
 			totalNumBytes += numBytes
 
 			if commonArgs.WriteParquet {
 				transformedLedgers = append(transformedLedgers, transformed)
 			}
-		}
+		})
 
-		outFile.Close()
-		cmdLogger.Info("Number of bytes written: ", totalNumBytes)
-
-		PrintTransformStats(len(ledgers), numFailures)
-
-		MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
-
-		if commonArgs.WriteParquet {
-			MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, parquetPath)
-			WriteParquet(transformedLedgers, parquetPath, new(transform.LedgerOutputParquet))
+		if commonArgs.EndNum > 0 {
+			cmdLogger.Info("Number of bytes written: ", totalNumBytes)
+			PrintTransformStats(attempts, numFailures)
+			MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
+			if commonArgs.WriteParquet {
+				MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, parquetPath)
+				WriteParquet(transformedLedgers, parquetPath, new(transform.LedgerOutputParquet))
+			}
 		}
 	},
 }
@@ -79,7 +69,6 @@ func init() {
 	utils.AddCommonFlags(ledgersCmd.Flags())
 	utils.AddArchiveFlags("ledgers", ledgersCmd.Flags())
 	utils.AddCloudStorageFlags(ledgersCmd.Flags())
-	ledgersCmd.MarkFlagRequired("end-ledger")
 	/*
 		Current flags:
 			start-ledger: the ledger sequence number for the beginning of the export period

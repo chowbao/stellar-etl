@@ -2,10 +2,13 @@ package cmd
 
 import (
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"github.com/stellar/stellar-etl/v2/internal/input"
+	"github.com/stellar/go-stellar-sdk/ingest"
+	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
 	"github.com/stellar/stellar-etl/v2/internal/utils"
 )
@@ -22,47 +25,54 @@ var contractEventsCmd = &cobra.Command{
 		commonArgs := utils.MustCommonFlags(cmd.Flags(), cmdLogger)
 		env := utils.GetEnvironmentDetails(commonArgs)
 
-		transactions, err := input.GetTransactions(cmdArgs.StartNum, cmdArgs.EndNum, cmdArgs.Limit, env, cmdArgs.UseCaptiveCore)
-		if err != nil {
-			cmdLogger.Fatal("could not read transactions: ", err)
-		}
-
-		outFile := MustOutFile(cmdArgs.Path)
 		numFailures := 0
+		attempts := 0
 		var transformedEvents []transform.SchemaParquet
-		for _, transformInput := range transactions {
-			transformed, err := transform.TransformContractEvent(transformInput.Transaction, transformInput.LedgerHistory)
+
+		StreamLedgers(cmdArgs.StartNum, cmdArgs.EndNum, cmdArgs.Path, cmdArgs.UseCaptiveCore, env, func(seq uint32, lcm xdr.LedgerCloseMeta, outFile *os.File) {
+			txReader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(env.NetworkPassphrase, lcm)
 			if err != nil {
-				ledgerSeq := transformInput.LedgerHistory.Header.LedgerSeq
-				cmdLogger.LogError(fmt.Errorf("could not transform contract events in transaction %d in ledger %d: ", transformInput.Transaction.Index, ledgerSeq))
-				numFailures += 1
-				continue
+				cmdLogger.LogError(fmt.Errorf("could not create transaction reader for ledger %d: %s", seq, err))
+				return
 			}
 
-			for _, contractEvent := range transformed {
-				_, err := ExportEntry(contractEvent, outFile, cmdArgs.Extra)
+			lhe := txReader.GetHeader()
+			for {
+				tx, err := txReader.Read()
+				if err == io.EOF {
+					break
+				}
 				if err != nil {
-					cmdLogger.LogError(fmt.Errorf("could not export contract event: %v", err))
-					numFailures += 1
+					cmdLogger.LogError(fmt.Errorf("could not read transaction in ledger %d: %s", seq, err))
+					break
+				}
+
+				attempts++
+				events, err := transform.TransformContractEvent(tx, lhe)
+				if err != nil {
+					cmdLogger.LogError(fmt.Errorf("could not transform contract events in ledger %d: %s", seq, err))
+					numFailures++
 					continue
 				}
 
-				if commonArgs.WriteParquet {
-					transformedEvents = append(transformedEvents, contractEvent)
+				for _, event := range events {
+					_, err = ExportEntry(event, outFile, cmdArgs.Extra)
+					if err != nil {
+						cmdLogger.LogError(fmt.Errorf("could not export contract event in ledger %d: %s", seq, err))
+						numFailures++
+					}
 				}
 			}
+			txReader.Close()
+		})
 
-		}
-
-		outFile.Close()
-
-		PrintTransformStats(len(transactions), numFailures)
-
-		MaybeUpload(cmdArgs.Credentials, cmdArgs.Bucket, cmdArgs.Provider, cmdArgs.Path)
-
-		if commonArgs.WriteParquet {
-			WriteParquet(transformedEvents, cmdArgs.ParquetPath, new(transform.ContractEventOutputParquet))
-			MaybeUpload(cmdArgs.Credentials, cmdArgs.Bucket, cmdArgs.Provider, cmdArgs.ParquetPath)
+		if cmdArgs.EndNum > 0 {
+			PrintTransformStats(attempts, numFailures)
+			MaybeUpload(cmdArgs.Credentials, cmdArgs.Bucket, cmdArgs.Provider, cmdArgs.Path)
+			if commonArgs.WriteParquet {
+				WriteParquet(transformedEvents, cmdArgs.ParquetPath, new(transform.ContractEventOutputParquet))
+				MaybeUpload(cmdArgs.Credentials, cmdArgs.Bucket, cmdArgs.Provider, cmdArgs.ParquetPath)
+			}
 		}
 
 	},
@@ -75,5 +85,4 @@ func init() {
 	utils.AddCloudStorageFlags(contractEventsCmd.Flags())
 
 	contractEventsCmd.MarkFlagRequired("start-ledger")
-	contractEventsCmd.MarkFlagRequired("end-ledger")
 }

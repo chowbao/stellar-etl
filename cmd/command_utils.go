@@ -2,18 +2,70 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
+	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
+	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
+	"github.com/stellar/stellar-etl/v2/internal/utils"
 	"github.com/xitongsys/parquet-go-source/local"
 	"github.com/xitongsys/parquet-go/writer"
 )
 
 type CloudStorage interface {
 	UploadTo(credentialsPath, bucket, path string) error
+}
+
+// StreamLedgers creates a ledger backend, prepares the requested range, and calls
+// processLedger for each ledger in the range. When endNum is 0 the range is
+// unbounded and runs until SIGTERM/interrupt; otherwise it processes startNum
+// through endNum inclusive and then returns.
+func StreamLedgers(startNum, endNum uint32, path string, useCaptiveCore bool, env utils.EnvironmentDetails, processLedger func(seq uint32, lcm xdr.LedgerCloseMeta, outFile *os.File)) {
+	var ctx context.Context
+	var stop context.CancelFunc
+	if endNum == 0 {
+		ctx, stop = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	} else {
+		ctx, stop = context.WithCancel(context.Background())
+	}
+	defer stop()
+
+	backend, err := utils.CreateLedgerBackend(ctx, useCaptiveCore, env)
+	if err != nil {
+		cmdLogger.Fatal("could not create backend: ", err)
+	}
+
+	var ledgerRange ledgerbackend.Range
+	if endNum == 0 {
+		ledgerRange = ledgerbackend.UnboundedRange(startNum)
+	} else {
+		ledgerRange = ledgerbackend.BoundedRange(startNum, endNum)
+	}
+
+	err = backend.PrepareRange(ctx, ledgerRange)
+	if err != nil {
+		cmdLogger.Fatal("could not prepare range: ", err)
+	}
+
+	outFile := MustOutFile(path)
+	defer outFile.Close()
+
+	for seq := startNum; ctx.Err() == nil && (endNum == 0 || seq <= endNum); seq++ {
+		lcm, err := backend.GetLedger(ctx, seq)
+		if ctx.Err() != nil {
+			break
+		}
+		if err != nil {
+			cmdLogger.Fatal("could not get ledger: ", err)
+		}
+		processLedger(seq, lcm, outFile)
+	}
 }
 
 func createOutputFile(filepath string) error {

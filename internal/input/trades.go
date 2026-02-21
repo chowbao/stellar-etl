@@ -61,7 +61,7 @@ func GetTrades(start, end uint32, limit int64, env utils.EnvironmentDetails, use
 
 					Trades also can only occur when these operations are successful
 				*/
-				if operationResultsInTrade(op) && tx.Result.Successful() {
+				if OperationResultsInTrade(op) && tx.Result.Successful() {
 					tradeSlice = append(tradeSlice, TradeTransformInput{
 						OperationIndex:     int32(index),
 						Transaction:        tx,
@@ -85,8 +85,8 @@ func GetTrades(start, end uint32, limit int64, env utils.EnvironmentDetails, use
 	return tradeSlice, nil
 }
 
-// operationResultsInTrade returns true if the operation results in a trade
-func operationResultsInTrade(operation xdr.Operation) bool {
+// OperationResultsInTrade returns true if the operation results in a trade
+func OperationResultsInTrade(operation xdr.Operation) bool {
 	switch operation.Body.Type {
 	case xdr.OperationTypeManageBuyOffer:
 		return true

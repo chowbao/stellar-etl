@@ -2,10 +2,13 @@ package cmd
 
 import (
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"github.com/stellar/stellar-etl/v2/internal/input"
+	"github.com/stellar/go-stellar-sdk/ingest"
+	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
 	"github.com/stellar/stellar-etl/v2/internal/utils"
 )
@@ -18,51 +21,65 @@ var operationsCmd = &cobra.Command{
 		cmdLogger.SetLevel(logrus.InfoLevel)
 		commonArgs := utils.MustCommonFlags(cmd.Flags(), cmdLogger)
 		cmdLogger.StrictExport = commonArgs.StrictExport
-		startNum, path, parquetPath, limit := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
+		startNum, path, parquetPath, _ := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
 		cloudStorageBucket, cloudCredentials, cloudProvider := utils.MustCloudStorageFlags(cmd.Flags(), cmdLogger)
 		env := utils.GetEnvironmentDetails(commonArgs)
 
-		operations, err := input.GetOperations(startNum, commonArgs.EndNum, limit, env, commonArgs.UseCaptiveCore)
-		if err != nil {
-			cmdLogger.Fatal("could not read operations: ", err)
-		}
-
-		outFile := MustOutFile(path)
 		numFailures := 0
 		totalNumBytes := 0
+		attempts := 0
 		var transformedOps []transform.SchemaParquet
-		for _, transformInput := range operations {
-			transformed, err := transform.TransformOperation(transformInput.Operation, transformInput.OperationIndex, transformInput.Transaction, transformInput.LedgerSeqNum, transformInput.LedgerCloseMeta, env.NetworkPassphrase)
+
+		StreamLedgers(startNum, commonArgs.EndNum, path, commonArgs.UseCaptiveCore, env, func(seq uint32, lcm xdr.LedgerCloseMeta, outFile *os.File) {
+			txReader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(env.NetworkPassphrase, lcm)
 			if err != nil {
-				txIndex := transformInput.Transaction.Index
-				cmdLogger.LogError(fmt.Errorf("could not transform operation %d in transaction %d in ledger %d: %v", transformInput.OperationIndex, txIndex, transformInput.LedgerSeqNum, err))
-				numFailures += 1
-				continue
+				cmdLogger.LogError(fmt.Errorf("could not create transaction reader for ledger %d: %s", seq, err))
+				return
 			}
 
-			numBytes, err := ExportEntry(transformed, outFile, commonArgs.Extra)
-			if err != nil {
-				cmdLogger.LogError(fmt.Errorf("could not export operation: %v", err))
-				numFailures += 1
-				continue
-			}
-			totalNumBytes += numBytes
+			for {
+				tx, err := txReader.Read()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					cmdLogger.LogError(fmt.Errorf("could not read transaction in ledger %d: %s", seq, err))
+					break
+				}
 
+				for index, op := range tx.Envelope.Operations() {
+					attempts++
+					transformed, err := transform.TransformOperation(op, int32(index), tx, int32(seq), lcm, env.NetworkPassphrase)
+					if err != nil {
+						cmdLogger.LogError(fmt.Errorf("could not transform operation %d in ledger %d: %s", index, seq, err))
+						numFailures++
+						continue
+					}
+
+					numBytes, err := ExportEntry(transformed, outFile, commonArgs.Extra)
+					if err != nil {
+						cmdLogger.LogError(fmt.Errorf("could not export operation in ledger %d: %s", seq, err))
+						numFailures++
+						continue
+					}
+					totalNumBytes += numBytes
+
+					if commonArgs.WriteParquet {
+						transformedOps = append(transformedOps, transformed)
+					}
+				}
+			}
+			txReader.Close()
+		})
+
+		if commonArgs.EndNum > 0 {
+			cmdLogger.Info("Number of bytes written: ", totalNumBytes)
+			PrintTransformStats(attempts, numFailures)
+			MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
 			if commonArgs.WriteParquet {
-				transformedOps = append(transformedOps, transformed)
+				MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, parquetPath)
+				WriteParquet(transformedOps, parquetPath, new(transform.OperationOutputParquet))
 			}
-		}
-
-		outFile.Close()
-		cmdLogger.Info("Number of bytes written: ", totalNumBytes)
-
-		PrintTransformStats(len(operations), numFailures)
-
-		MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
-
-		if commonArgs.WriteParquet {
-			MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, parquetPath)
-			WriteParquet(transformedOps, parquetPath, new(transform.OperationOutputParquet))
 		}
 	},
 }
@@ -72,8 +89,6 @@ func init() {
 	utils.AddCommonFlags(operationsCmd.Flags())
 	utils.AddArchiveFlags("operations", operationsCmd.Flags())
 	utils.AddCloudStorageFlags(operationsCmd.Flags())
-	operationsCmd.MarkFlagRequired("end-ledger")
-
 	/*
 		Current flags:
 			start-ledger: the ledger sequence number for the beginning of the export period

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -58,26 +60,41 @@ be exported.`,
 			cmdLogger.Fatal("stellar-core needs a config file path when exporting ledgers continuously (endNum = 0)")
 		}
 
-		ctx := context.Background()
+		var ctx context.Context
+		var stop context.CancelFunc
+		if commonArgs.EndNum == 0 {
+			ctx, stop = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		} else {
+			ctx, stop = context.WithCancel(context.Background())
+		}
+		defer stop()
+
 		backend, err := utils.CreateLedgerBackend(ctx, commonArgs.UseCaptiveCore, env)
 		if err != nil {
 			cmdLogger.Fatal("error creating a cloud storage backend: ", err)
 		}
 
-		err = backend.PrepareRange(ctx, ledgerbackend.BoundedRange(startNum, commonArgs.EndNum))
+		var ledgerRange ledgerbackend.Range
+		endNum := commonArgs.EndNum
+		if endNum == 0 {
+			ledgerRange = ledgerbackend.UnboundedRange(startNum)
+			endNum = math.MaxInt32
+		} else {
+			ledgerRange = ledgerbackend.BoundedRange(startNum, endNum)
+		}
+
+		err = backend.PrepareRange(ctx, ledgerRange)
 		if err != nil {
 			cmdLogger.Fatal("error preparing ledger range for cloud storage backend: ", err)
 		}
 
-		if commonArgs.EndNum == 0 {
-			commonArgs.EndNum = math.MaxInt32
-		}
-
 		changeChan := make(chan input.ChangeBatch)
 		closeChan := make(chan int)
-		go input.StreamChanges(&backend, startNum, commonArgs.EndNum, batchSize, changeChan, closeChan, env, cmdLogger)
+		go input.StreamChanges(&backend, startNum, endNum, batchSize, changeChan, closeChan, env, cmdLogger)
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case <-closeChan:
 				return
 			case batch, ok := <-changeChan:
