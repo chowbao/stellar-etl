@@ -2,18 +2,56 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
+	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
+	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
+	"github.com/stellar/stellar-etl/v2/internal/utils"
 	"github.com/xitongsys/parquet-go-source/local"
 	"github.com/xitongsys/parquet-go/writer"
 )
 
 type CloudStorage interface {
 	UploadTo(credentialsPath, bucket, path string) error
+}
+
+// StreamUnboundedLedgers sets up a signal-aware context, creates a ledger backend,
+// prepares an unbounded range starting at startNum, and calls processLedger for each
+// ledger until the context is cancelled (SIGTERM/interrupt).
+func StreamUnboundedLedgers(startNum uint32, path string, useCaptiveCore bool, env utils.EnvironmentDetails, processLedger func(seq uint32, lcm xdr.LedgerCloseMeta, outFile *os.File)) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	backend, err := utils.CreateLedgerBackend(ctx, useCaptiveCore, env)
+	if err != nil {
+		cmdLogger.Fatal("could not create backend: ", err)
+	}
+
+	err = backend.PrepareRange(ctx, ledgerbackend.UnboundedRange(startNum))
+	if err != nil {
+		cmdLogger.Fatal("could not prepare range: ", err)
+	}
+
+	outFile := MustOutFile(path)
+	defer outFile.Close()
+
+	for seq := startNum; ctx.Err() == nil; seq++ {
+		lcm, err := backend.GetLedger(ctx, seq)
+		if ctx.Err() != nil {
+			break
+		}
+		if err != nil {
+			cmdLogger.Fatal("could not get ledger: ", err)
+		}
+		processLedger(seq, lcm, outFile)
+	}
 }
 
 func createOutputFile(filepath string) error {

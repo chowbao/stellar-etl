@@ -1,16 +1,13 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/sirupsen/logrus"
 	"github.com/stellar/go-stellar-sdk/ingest"
-	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
+	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stellar/stellar-etl/v2/internal/toid"
 
 	"github.com/spf13/cobra"
@@ -33,33 +30,11 @@ var tradesCmd = &cobra.Command{
 		cloudStorageBucket, cloudCredentials, cloudProvider := utils.MustCloudStorageFlags(cmd.Flags(), cmdLogger)
 
 		if commonArgs.EndNum == 0 {
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
-
-			backend, err := utils.CreateLedgerBackend(ctx, commonArgs.UseCaptiveCore, env)
-			if err != nil {
-				cmdLogger.Fatal("could not create backend: ", err)
-			}
-
-			err = backend.PrepareRange(ctx, ledgerbackend.UnboundedRange(startNum))
-			if err != nil {
-				cmdLogger.Fatal("could not prepare range: ", err)
-			}
-
-			outFile := MustOutFile(path)
-			for seq := startNum; ctx.Err() == nil; seq++ {
-				lcm, err := backend.GetLedger(ctx, seq)
-				if ctx.Err() != nil {
-					break
-				}
-				if err != nil {
-					cmdLogger.Fatal("could not get ledger: ", err)
-				}
-
+			StreamUnboundedLedgers(startNum, path, commonArgs.UseCaptiveCore, env, func(seq uint32, lcm xdr.LedgerCloseMeta, outFile *os.File) {
 				txReader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(env.NetworkPassphrase, lcm)
 				if err != nil {
 					cmdLogger.LogError(fmt.Errorf("could not create transaction reader for ledger %d: %s", seq, err))
-					continue
+					return
 				}
 
 				closeTime, _ := utils.TimePointToUTCTimeStamp(txReader.GetHeader().Header.ScpValue.CloseTime)
@@ -97,8 +72,7 @@ var tradesCmd = &cobra.Command{
 					}
 				}
 				txReader.Close()
-			}
-			outFile.Close()
+			})
 			return
 		}
 

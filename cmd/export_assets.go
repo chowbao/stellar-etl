@@ -1,15 +1,11 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stellar/stellar-etl/v2/internal/input"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
@@ -29,30 +25,8 @@ var assetsCmd = &cobra.Command{
 		env := utils.GetEnvironmentDetails(commonArgs)
 
 		if commonArgs.EndNum == 0 {
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
-
-			backend, err := utils.CreateLedgerBackend(ctx, commonArgs.UseCaptiveCore, env)
-			if err != nil {
-				cmdLogger.Fatal("could not create backend: ", err)
-			}
-
-			err = backend.PrepareRange(ctx, ledgerbackend.UnboundedRange(startNum))
-			if err != nil {
-				cmdLogger.Fatal("could not prepare range: ", err)
-			}
-
-			outFile := MustOutFile(path)
 			seenIDs := map[int64]bool{}
-			for seq := startNum; ctx.Err() == nil; seq++ {
-				lcm, err := backend.GetLedger(ctx, seq)
-				if ctx.Err() != nil {
-					break
-				}
-				if err != nil {
-					cmdLogger.Fatal("could not get ledger: ", err)
-				}
-
+			StreamUnboundedLedgers(startNum, path, commonArgs.UseCaptiveCore, env, func(seq uint32, lcm xdr.LedgerCloseMeta, outFile *os.File) {
 				transactionSet := lcm.TransactionEnvelopes()
 				for txIndex, transaction := range transactionSet {
 					for opIndex, op := range transaction.Operations() {
@@ -75,8 +49,7 @@ var assetsCmd = &cobra.Command{
 						}
 					}
 				}
-			}
-			outFile.Close()
+			})
 			return
 		}
 
