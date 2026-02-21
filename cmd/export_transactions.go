@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stellar/go-stellar-sdk/ingest"
 	"github.com/stellar/go-stellar-sdk/xdr"
-	"github.com/stellar/stellar-etl/v2/internal/input"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
 	"github.com/stellar/stellar-etl/v2/internal/utils"
 )
@@ -22,86 +21,64 @@ var transactionsCmd = &cobra.Command{
 		cmdLogger.SetLevel(logrus.InfoLevel)
 		commonArgs := utils.MustCommonFlags(cmd.Flags(), cmdLogger)
 		cmdLogger.StrictExport = commonArgs.StrictExport
-		startNum, path, parquetPath, limit := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
+		startNum, path, parquetPath, _ := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
 		cloudStorageBucket, cloudCredentials, cloudProvider := utils.MustCloudStorageFlags(cmd.Flags(), cmdLogger)
 		env := utils.GetEnvironmentDetails(commonArgs)
 
-		if commonArgs.EndNum == 0 {
-			StreamUnboundedLedgers(startNum, path, commonArgs.UseCaptiveCore, env, func(seq uint32, lcm xdr.LedgerCloseMeta, outFile *os.File) {
-				txReader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(env.NetworkPassphrase, lcm)
-				if err != nil {
-					cmdLogger.LogError(fmt.Errorf("could not create transaction reader for ledger %d: %s", seq, err))
-					return
-				}
-
-				lhe := txReader.GetHeader()
-				for {
-					tx, err := txReader.Read()
-					if err == io.EOF {
-						break
-					}
-					if err != nil {
-						cmdLogger.LogError(fmt.Errorf("could not read transaction in ledger %d: %s", seq, err))
-						break
-					}
-
-					transformed, err := transform.TransformTransaction(tx, lhe)
-					if err != nil {
-						cmdLogger.LogError(fmt.Errorf("could not transform transaction in ledger %d: %s", seq, err))
-						continue
-					}
-
-					_, err = ExportEntry(transformed, outFile, commonArgs.Extra)
-					if err != nil {
-						cmdLogger.LogError(fmt.Errorf("could not export transaction in ledger %d: %s", seq, err))
-					}
-				}
-				txReader.Close()
-			})
-			return
-		}
-
-		transactions, err := input.GetTransactions(startNum, commonArgs.EndNum, limit, env, commonArgs.UseCaptiveCore)
-		if err != nil {
-			cmdLogger.Fatal("could not read transactions: ", err)
-		}
-
-		outFile := MustOutFile(path)
 		numFailures := 0
 		totalNumBytes := 0
+		attempts := 0
 		var transformedTransaction []transform.SchemaParquet
-		for _, transformInput := range transactions {
-			transformed, err := transform.TransformTransaction(transformInput.Transaction, transformInput.LedgerHistory)
+
+		StreamLedgers(startNum, commonArgs.EndNum, path, commonArgs.UseCaptiveCore, env, func(seq uint32, lcm xdr.LedgerCloseMeta, outFile *os.File) {
+			txReader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(env.NetworkPassphrase, lcm)
 			if err != nil {
-				ledgerSeq := transformInput.LedgerHistory.Header.LedgerSeq
-				cmdLogger.LogError(fmt.Errorf("could not transform transaction %d in ledger %d: ", transformInput.Transaction.Index, ledgerSeq))
-				numFailures += 1
-				continue
+				cmdLogger.LogError(fmt.Errorf("could not create transaction reader for ledger %d: %s", seq, err))
+				return
 			}
 
-			numBytes, err := ExportEntry(transformed, outFile, commonArgs.Extra)
-			if err != nil {
-				cmdLogger.LogError(fmt.Errorf("could not export transaction: %v", err))
-				numFailures += 1
-				continue
-			}
-			totalNumBytes += numBytes
+			lhe := txReader.GetHeader()
+			for {
+				tx, err := txReader.Read()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					cmdLogger.LogError(fmt.Errorf("could not read transaction in ledger %d: %s", seq, err))
+					break
+				}
 
+				attempts++
+				transformed, err := transform.TransformTransaction(tx, lhe)
+				if err != nil {
+					cmdLogger.LogError(fmt.Errorf("could not transform transaction in ledger %d: %s", seq, err))
+					numFailures++
+					continue
+				}
+
+				numBytes, err := ExportEntry(transformed, outFile, commonArgs.Extra)
+				if err != nil {
+					cmdLogger.LogError(fmt.Errorf("could not export transaction in ledger %d: %s", seq, err))
+					numFailures++
+					continue
+				}
+				totalNumBytes += numBytes
+
+				if commonArgs.WriteParquet {
+					transformedTransaction = append(transformedTransaction, transformed)
+				}
+			}
+			txReader.Close()
+		})
+
+		if commonArgs.EndNum > 0 {
+			cmdLogger.Info("Number of bytes written: ", totalNumBytes)
+			PrintTransformStats(attempts, numFailures)
+			MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
 			if commonArgs.WriteParquet {
-				transformedTransaction = append(transformedTransaction, transformed)
+				MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, parquetPath)
+				WriteParquet(transformedTransaction, parquetPath, new(transform.TransactionOutputParquet))
 			}
-		}
-
-		outFile.Close()
-		cmdLogger.Info("Number of bytes written: ", totalNumBytes)
-
-		PrintTransformStats(len(transactions), numFailures)
-
-		MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
-
-		if commonArgs.WriteParquet {
-			MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, parquetPath)
-			WriteParquet(transformedTransaction, parquetPath, new(transform.TransactionOutputParquet))
 		}
 	},
 }

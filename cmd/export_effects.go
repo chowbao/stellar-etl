@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stellar/go-stellar-sdk/ingest"
 	"github.com/stellar/go-stellar-sdk/xdr"
-	"github.com/stellar/stellar-etl/v2/internal/input"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
 	"github.com/stellar/stellar-etl/v2/internal/utils"
 )
@@ -22,92 +21,67 @@ var effectsCmd = &cobra.Command{
 		cmdLogger.SetLevel(logrus.InfoLevel)
 		commonArgs := utils.MustCommonFlags(cmd.Flags(), cmdLogger)
 		cmdLogger.StrictExport = commonArgs.StrictExport
-		startNum, path, parquetPath, limit := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
+		startNum, path, parquetPath, _ := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
 		cloudStorageBucket, cloudCredentials, cloudProvider := utils.MustCloudStorageFlags(cmd.Flags(), cmdLogger)
 		env := utils.GetEnvironmentDetails(commonArgs)
 
-		if commonArgs.EndNum == 0 {
-			StreamUnboundedLedgers(startNum, path, commonArgs.UseCaptiveCore, env, func(seq uint32, lcm xdr.LedgerCloseMeta, outFile *os.File) {
-				txReader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(env.NetworkPassphrase, lcm)
-				if err != nil {
-					cmdLogger.LogError(fmt.Errorf("could not create transaction reader for ledger %d: %s", seq, err))
-					return
-				}
-
-				lhe := txReader.GetHeader()
-				for {
-					tx, err := txReader.Read()
-					if err == io.EOF {
-						break
-					}
-					if err != nil {
-						cmdLogger.LogError(fmt.Errorf("could not read transaction in ledger %d: %s", seq, err))
-						break
-					}
-
-					LedgerSeq := uint32(lhe.Header.LedgerSeq)
-					effects, err := transform.TransformEffect(tx, LedgerSeq, lcm, env.NetworkPassphrase)
-					if err != nil {
-						cmdLogger.LogError(fmt.Errorf("could not transform effects in ledger %d: %s", seq, err))
-						continue
-					}
-
-					for _, e := range effects {
-						_, err = ExportEntry(e, outFile, commonArgs.Extra)
-						if err != nil {
-							cmdLogger.LogError(fmt.Errorf("could not export effect in ledger %d: %s", seq, err))
-						}
-					}
-				}
-				txReader.Close()
-			})
-			return
-		}
-
-		transactions, err := input.GetTransactions(startNum, commonArgs.EndNum, limit, env, commonArgs.UseCaptiveCore)
-		if err != nil {
-			cmdLogger.Fatalf("could not read transactions in [%d, %d] (limit=%d): %v", startNum, commonArgs.EndNum, limit, err)
-		}
-
-		outFile := MustOutFile(path)
 		numFailures := 0
 		totalNumBytes := 0
+		attempts := 0
 		var transformedEffects []transform.SchemaParquet
-		for _, transformInput := range transactions {
-			LedgerSeq := uint32(transformInput.LedgerHistory.Header.LedgerSeq)
-			effects, err := transform.TransformEffect(transformInput.Transaction, LedgerSeq, transformInput.LedgerCloseMeta, env.NetworkPassphrase)
+
+		StreamLedgers(startNum, commonArgs.EndNum, path, commonArgs.UseCaptiveCore, env, func(seq uint32, lcm xdr.LedgerCloseMeta, outFile *os.File) {
+			txReader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(env.NetworkPassphrase, lcm)
 			if err != nil {
-				txIndex := transformInput.Transaction.Index
-				cmdLogger.LogError(fmt.Errorf("could not transform transaction %d in ledger %d: %v", txIndex, LedgerSeq, err))
-				numFailures += 1
-				continue
+				cmdLogger.LogError(fmt.Errorf("could not create transaction reader for ledger %d: %s", seq, err))
+				return
 			}
 
-			for _, transformed := range effects {
-				numBytes, err := ExportEntry(transformed, outFile, commonArgs.Extra)
+			lhe := txReader.GetHeader()
+			for {
+				tx, err := txReader.Read()
+				if err == io.EOF {
+					break
+				}
 				if err != nil {
-					cmdLogger.LogError(err)
-					numFailures += 1
+					cmdLogger.LogError(fmt.Errorf("could not read transaction in ledger %d: %s", seq, err))
+					break
+				}
+
+				attempts++
+				LedgerSeq := uint32(lhe.Header.LedgerSeq)
+				effects, err := transform.TransformEffect(tx, LedgerSeq, lcm, env.NetworkPassphrase)
+				if err != nil {
+					cmdLogger.LogError(fmt.Errorf("could not transform effects in ledger %d: %s", seq, err))
+					numFailures++
 					continue
 				}
-				totalNumBytes += numBytes
 
-				if commonArgs.WriteParquet {
-					transformedEffects = append(transformedEffects, transformed)
+				for _, e := range effects {
+					numBytes, err := ExportEntry(e, outFile, commonArgs.Extra)
+					if err != nil {
+						cmdLogger.LogError(fmt.Errorf("could not export effect in ledger %d: %s", seq, err))
+						numFailures++
+						continue
+					}
+					totalNumBytes += numBytes
+
+					if commonArgs.WriteParquet {
+						transformedEffects = append(transformedEffects, e)
+					}
 				}
 			}
-		}
+			txReader.Close()
+		})
 
-		outFile.Close()
-		cmdLogger.Info("Number of bytes written: ", totalNumBytes)
-
-		PrintTransformStats(len(transactions), numFailures)
-
-		MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
-
-		if commonArgs.WriteParquet {
-			WriteParquet(transformedEffects, parquetPath, new(transform.EffectOutputParquet))
-			MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, parquetPath)
+		if commonArgs.EndNum > 0 {
+			cmdLogger.Info("Number of bytes written: ", totalNumBytes)
+			PrintTransformStats(attempts, numFailures)
+			MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
+			if commonArgs.WriteParquet {
+				WriteParquet(transformedEffects, parquetPath, new(transform.EffectOutputParquet))
+				MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, parquetPath)
+			}
 		}
 	},
 }

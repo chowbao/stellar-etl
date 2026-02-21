@@ -7,7 +7,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/stellar/go-stellar-sdk/xdr"
-	"github.com/stellar/stellar-etl/v2/internal/input"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
 	"github.com/stellar/stellar-etl/v2/internal/utils"
 )
@@ -20,96 +19,59 @@ var assetsCmd = &cobra.Command{
 		cmdLogger.SetLevel(logrus.InfoLevel)
 		commonArgs := utils.MustCommonFlags(cmd.Flags(), cmdLogger)
 		cmdLogger.StrictExport = commonArgs.StrictExport
-		startNum, path, parquetPath, limit := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
+		startNum, path, parquetPath, _ := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
 		cloudStorageBucket, cloudCredentials, cloudProvider := utils.MustCloudStorageFlags(cmd.Flags(), cmdLogger)
 		env := utils.GetEnvironmentDetails(commonArgs)
 
-		if commonArgs.EndNum == 0 {
-			seenIDs := map[int64]bool{}
-			StreamUnboundedLedgers(startNum, path, commonArgs.UseCaptiveCore, env, func(seq uint32, lcm xdr.LedgerCloseMeta, outFile *os.File) {
-				transactionSet := lcm.TransactionEnvelopes()
-				for txIndex, transaction := range transactionSet {
-					for opIndex, op := range transaction.Operations() {
-						if op.Body.Type == xdr.OperationTypePayment || op.Body.Type == xdr.OperationTypeManageSellOffer {
-							transformed, err := transform.TransformAsset(op, int32(opIndex), int32(txIndex), int32(seq), lcm)
-							if err != nil {
-								cmdLogger.LogError(fmt.Errorf("could not extract asset from operation %d in ledger %d: %s", opIndex, seq, err))
-								continue
-							}
-
-							if _, exists := seenIDs[transformed.AssetID]; exists {
-								continue
-							}
-							seenIDs[transformed.AssetID] = true
-
-							_, err = ExportEntry(transformed, outFile, commonArgs.Extra)
-							if err != nil {
-								cmdLogger.LogError(fmt.Errorf("could not export asset in ledger %d: %s", seq, err))
-							}
-						}
-					}
-				}
-			})
-			return
-		}
-
-		outFile := MustOutFile(path)
-
-		var paymentOps []input.AssetTransformInput
-		var err error
-
-		if commonArgs.UseCaptiveCore {
-			paymentOps, err = input.GetPaymentOperationsHistoryArchive(startNum, commonArgs.EndNum, limit, env, commonArgs.UseCaptiveCore)
-		} else {
-			paymentOps, err = input.GetPaymentOperations(startNum, commonArgs.EndNum, limit, env, commonArgs.UseCaptiveCore)
-		}
-		if err != nil {
-			cmdLogger.Fatal("could not read asset: ", err)
-		}
-
-		// With seenIDs, the code doesn't export duplicate assets within a single export. Note that across exports, assets may be duplicated
+		// seenIDs deduplicates assets within a single export run; across exports, assets may be duplicated
 		seenIDs := map[int64]bool{}
 		numFailures := 0
 		totalNumBytes := 0
+		attempts := 0
 		var transformedAssets []transform.SchemaParquet
-		for _, transformInput := range paymentOps {
-			transformed, err := transform.TransformAsset(transformInput.Operation, transformInput.OperationIndex, transformInput.TransactionIndex, transformInput.LedgerSeqNum, transformInput.LedgerCloseMeta)
-			if err != nil {
-				txIndex := transformInput.TransactionIndex
-				cmdLogger.LogError(fmt.Errorf("could not extract asset from operation %d in transaction %d in ledger %d: ", transformInput.OperationIndex, txIndex, transformInput.LedgerSeqNum))
-				numFailures += 1
-				continue
-			}
 
-			// if we have seen the asset already, do not export it
-			if _, exists := seenIDs[transformed.AssetID]; exists {
-				continue
-			}
+		StreamLedgers(startNum, commonArgs.EndNum, path, commonArgs.UseCaptiveCore, env, func(seq uint32, lcm xdr.LedgerCloseMeta, outFile *os.File) {
+			transactionSet := lcm.TransactionEnvelopes()
+			for txIndex, transaction := range transactionSet {
+				for opIndex, op := range transaction.Operations() {
+					if op.Body.Type == xdr.OperationTypePayment || op.Body.Type == xdr.OperationTypeManageSellOffer {
+						attempts++
+						transformed, err := transform.TransformAsset(op, int32(opIndex), int32(txIndex), int32(seq), lcm)
+						if err != nil {
+							cmdLogger.LogError(fmt.Errorf("could not extract asset from operation %d in ledger %d: %s", opIndex, seq, err))
+							numFailures++
+							continue
+						}
 
-			seenIDs[transformed.AssetID] = true
-			numBytes, err := ExportEntry(transformed, outFile, commonArgs.Extra)
-			if err != nil {
-				cmdLogger.LogError(err)
-				numFailures += 1
-				continue
-			}
-			totalNumBytes += numBytes
+						if _, exists := seenIDs[transformed.AssetID]; exists {
+							continue
+						}
+						seenIDs[transformed.AssetID] = true
 
+						numBytes, err := ExportEntry(transformed, outFile, commonArgs.Extra)
+						if err != nil {
+							cmdLogger.LogError(fmt.Errorf("could not export asset in ledger %d: %s", seq, err))
+							numFailures++
+							continue
+						}
+						totalNumBytes += numBytes
+
+						if commonArgs.WriteParquet {
+							transformedAssets = append(transformedAssets, transformed)
+						}
+					}
+				}
+			}
+		})
+
+		if commonArgs.EndNum > 0 {
+			cmdLogger.Infof("%d bytes written to %s", totalNumBytes, path)
+			PrintTransformStats(attempts, numFailures)
+			MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
 			if commonArgs.WriteParquet {
-				transformedAssets = append(transformedAssets, transformed)
+				WriteParquet(transformedAssets, parquetPath, new(transform.AssetOutputParquet))
+				MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, parquetPath)
 			}
-		}
-
-		outFile.Close()
-		cmdLogger.Infof("%d bytes written to %s", totalNumBytes, outFile.Name())
-
-		PrintTransformStats(len(paymentOps), numFailures)
-
-		MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
-
-		if commonArgs.WriteParquet {
-			WriteParquet(transformedAssets, parquetPath, new(transform.AssetOutputParquet))
-			MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, parquetPath)
 		}
 	},
 }

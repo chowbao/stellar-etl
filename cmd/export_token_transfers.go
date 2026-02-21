@@ -7,7 +7,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/stellar/go-stellar-sdk/xdr"
-	"github.com/stellar/stellar-etl/v2/internal/input"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
 	"github.com/stellar/stellar-etl/v2/internal/utils"
 )
@@ -20,66 +19,39 @@ var tokenTransfersCmd = &cobra.Command{
 		cmdLogger.SetLevel(logrus.InfoLevel)
 		commonArgs := utils.MustCommonFlags(cmd.Flags(), cmdLogger)
 		cmdLogger.StrictExport = commonArgs.StrictExport
-		startNum, path, _, limit := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
+		startNum, path, _, _ := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
 		cloudStorageBucket, cloudCredentials, cloudProvider := utils.MustCloudStorageFlags(cmd.Flags(), cmdLogger)
 		env := utils.GetEnvironmentDetails(commonArgs)
 
-		if commonArgs.EndNum == 0 {
-			StreamUnboundedLedgers(startNum, path, commonArgs.UseCaptiveCore, env, func(seq uint32, lcm xdr.LedgerCloseMeta, outFile *os.File) {
-				transformeds, err := transform.TransformTokenTransfer(lcm, env.NetworkPassphrase)
-				if err != nil {
-					cmdLogger.LogError(fmt.Errorf("could not transform token transfer for ledger %d: %s", seq, err))
-					return
-				}
-
-				for _, t := range transformeds {
-					_, err = ExportEntry(t, outFile, commonArgs.Extra)
-					if err != nil {
-						cmdLogger.LogError(fmt.Errorf("could not export token transfer for ledger %d: %s", seq, err))
-					}
-				}
-			})
-			return
-		}
-
-		var ledgers []utils.HistoryArchiveLedgerAndLCM
-		var err error
-
-		ledgers, err = input.GetLedgers(startNum, commonArgs.EndNum, limit, env, commonArgs.UseCaptiveCore)
-
-		if err != nil {
-			cmdLogger.Fatal("could not read ledgers: ", err)
-		}
-
-		outFile := MustOutFile(path)
-
 		numFailures := 0
 		totalNumBytes := 0
-		for i, ledger := range ledgers {
-			transformed, err := transform.TransformTokenTransfer(ledger.LCM, env.NetworkPassphrase)
+		attempts := 0
+
+		StreamLedgers(startNum, commonArgs.EndNum, path, commonArgs.UseCaptiveCore, env, func(seq uint32, lcm xdr.LedgerCloseMeta, outFile *os.File) {
+			attempts++
+			transformeds, err := transform.TransformTokenTransfer(lcm, env.NetworkPassphrase)
 			if err != nil {
-				cmdLogger.LogError(fmt.Errorf("could not json transform ttp %d: %s", startNum+uint32(i), err))
-				numFailures += 1
-				continue
+				cmdLogger.LogError(fmt.Errorf("could not transform token transfer for ledger %d: %s", seq, err))
+				numFailures++
+				return
 			}
 
-			for _, transform := range transformed {
-				numBytes, err := ExportEntry(transform, outFile, commonArgs.Extra)
+			for _, t := range transformeds {
+				numBytes, err := ExportEntry(t, outFile, commonArgs.Extra)
 				if err != nil {
-					cmdLogger.LogError(fmt.Errorf("could not export ledger %d: %s", startNum+uint32(i), err))
-					numFailures += 1
+					cmdLogger.LogError(fmt.Errorf("could not export token transfer for ledger %d: %s", seq, err))
+					numFailures++
 					continue
 				}
 				totalNumBytes += numBytes
 			}
+		})
+
+		if commonArgs.EndNum > 0 {
+			cmdLogger.Info("Number of bytes written: ", totalNumBytes)
+			PrintTransformStats(attempts, numFailures)
+			MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
 		}
-
-		outFile.Close()
-		cmdLogger.Info("Number of bytes written: ", totalNumBytes)
-
-		PrintTransformStats(len(ledgers), numFailures)
-
-		MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
 	},
 }
 
