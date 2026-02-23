@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -29,10 +28,7 @@ confirmed by the Stellar network.
 If no data type flags are set, then by default all of them are exported. If any are set, it is assumed that the others should not
 be exported.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		cmdLogger.SetLevel(logrus.InfoLevel)
-		commonArgs := utils.MustCommonFlags(cmd.Flags(), cmdLogger)
-		cmdLogger.StrictExport = commonArgs.StrictExport
-		env := utils.GetEnvironmentDetails(commonArgs)
+		commonArgs, env := SetupExportCommand(cmd)
 
 		_, configPath, startNum, batchSize, outputFolder, parquetOutputFolder := utils.MustCoreFlags(cmd.Flags(), cmdLogger)
 		exports := utils.MustExportTypeFlags(cmd.Flags(), cmdLogger)
@@ -61,12 +57,12 @@ be exported.`,
 		ctx := context.Background()
 		backend, err := utils.CreateLedgerBackend(ctx, commonArgs.UseCaptiveCore, env)
 		if err != nil {
-			cmdLogger.Fatal("error creating a cloud storage backend: ", err)
+			cmdLogger.Fatalf("failed to create ledger backend: %v", err)
 		}
 
 		err = backend.PrepareRange(ctx, ledgerbackend.BoundedRange(startNum, commonArgs.EndNum))
 		if err != nil {
-			cmdLogger.Fatal("error preparing ledger range for cloud storage backend: ", err)
+			cmdLogger.Fatalf("failed to prepare ledger range [%d, %d]: %v", startNum, commonArgs.EndNum, err)
 		}
 
 		if commonArgs.EndNum == 0 {

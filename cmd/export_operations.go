@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/stellar/stellar-etl/v2/internal/input"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
@@ -15,55 +14,42 @@ var operationsCmd = &cobra.Command{
 	Short: "Exports the operations data over a specified range",
 	Long:  `Exports the operations data over a specified range. Each operation is an individual command that mutates the Stellar ledger.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		cmdLogger.SetLevel(logrus.InfoLevel)
-		commonArgs := utils.MustCommonFlags(cmd.Flags(), cmdLogger)
-		cmdLogger.StrictExport = commonArgs.StrictExport
+		commonArgs, env := SetupExportCommand(cmd)
 		startNum, path, parquetPath, limit := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
 		cloudStorageBucket, cloudCredentials, cloudProvider := utils.MustCloudStorageFlags(cmd.Flags(), cmdLogger)
-		env := utils.GetEnvironmentDetails(commonArgs)
 
 		operations, err := input.GetOperations(startNum, commonArgs.EndNum, limit, env, commonArgs.UseCaptiveCore)
 		if err != nil {
-			cmdLogger.Fatal("could not read operations: ", err)
+			cmdLogger.Fatalf("could not read operations in [%d, %d] (limit=%d): %v", startNum, commonArgs.EndNum, limit, err)
 		}
 
 		outFile := MustOutFile(path)
-		numFailures := 0
-		totalNumBytes := 0
-		var transformedOps []transform.SchemaParquet
+		defer CloseFile(outFile)
+
+		results := ExportResults{NumAttempts: len(operations)}
 		for _, transformInput := range operations {
 			transformed, err := transform.TransformOperation(transformInput.Operation, transformInput.OperationIndex, transformInput.Transaction, transformInput.LedgerSeqNum, transformInput.LedgerCloseMeta, env.NetworkPassphrase)
 			if err != nil {
 				txIndex := transformInput.Transaction.Index
 				cmdLogger.LogError(fmt.Errorf("could not transform operation %d in transaction %d in ledger %d: %v", transformInput.OperationIndex, txIndex, transformInput.LedgerSeqNum, err))
-				numFailures += 1
+				results.NumFailures++
 				continue
 			}
 
 			numBytes, err := ExportEntry(transformed, outFile, commonArgs.Extra)
 			if err != nil {
 				cmdLogger.LogError(fmt.Errorf("could not export operation: %v", err))
-				numFailures += 1
+				results.NumFailures++
 				continue
 			}
-			totalNumBytes += numBytes
+			results.TotalNumBytes += numBytes
 
 			if commonArgs.WriteParquet {
-				transformedOps = append(transformedOps, transformed)
+				results.Parquet = append(results.Parquet, transformed)
 			}
 		}
 
-		outFile.Close()
-		cmdLogger.Info("Number of bytes written: ", totalNumBytes)
-
-		PrintTransformStats(len(operations), numFailures)
-
-		MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
-
-		if commonArgs.WriteParquet {
-			MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, parquetPath)
-			WriteParquet(transformedOps, parquetPath, new(transform.OperationOutputParquet))
-		}
+		FinishExport(results, cloudCredentials, cloudStorageBucket, cloudProvider, path, parquetPath, commonArgs.WriteParquet, new(transform.OperationOutputParquet))
 	},
 }
 

@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/stellar/stellar-etl/v2/internal/input"
 	"github.com/stellar/stellar-etl/v2/internal/transform"
@@ -15,51 +14,39 @@ var tokenTransfersCmd = &cobra.Command{
 	Short: "Exports the token transfer event data.",
 	Long:  `Exports token transfer data within the specified range to an output file. Encodes ledgers as JSON objects and exports them to the output file.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		cmdLogger.SetLevel(logrus.InfoLevel)
-		commonArgs := utils.MustCommonFlags(cmd.Flags(), cmdLogger)
-		cmdLogger.StrictExport = commonArgs.StrictExport
+		commonArgs, env := SetupExportCommand(cmd)
 		startNum, path, _, limit := utils.MustArchiveFlags(cmd.Flags(), cmdLogger)
 		cloudStorageBucket, cloudCredentials, cloudProvider := utils.MustCloudStorageFlags(cmd.Flags(), cmdLogger)
-		env := utils.GetEnvironmentDetails(commonArgs)
 
-		var ledgers []utils.HistoryArchiveLedgerAndLCM
-		var err error
-
-		ledgers, err = input.GetLedgers(startNum, commonArgs.EndNum, limit, env, commonArgs.UseCaptiveCore)
-
+		ledgers, err := input.GetLedgers(startNum, commonArgs.EndNum, limit, env, commonArgs.UseCaptiveCore)
 		if err != nil {
-			cmdLogger.Fatal("could not read ledgers: ", err)
+			cmdLogger.Fatalf("could not read ledgers for token transfers in [%d, %d] (limit=%d): %v", startNum, commonArgs.EndNum, limit, err)
 		}
 
 		outFile := MustOutFile(path)
+		defer CloseFile(outFile)
 
-		numFailures := 0
-		totalNumBytes := 0
+		results := ExportResults{NumAttempts: len(ledgers)}
 		for i, ledger := range ledgers {
 			transformed, err := transform.TransformTokenTransfer(ledger.LCM, env.NetworkPassphrase)
 			if err != nil {
-				cmdLogger.LogError(fmt.Errorf("could not json transform ttp %d: %s", startNum+uint32(i), err))
-				numFailures += 1
+				cmdLogger.LogError(fmt.Errorf("could not transform token transfer for ledger %d: %v", startNum+uint32(i), err))
+				results.NumFailures++
 				continue
 			}
 
-			for _, transform := range transformed {
-				numBytes, err := ExportEntry(transform, outFile, commonArgs.Extra)
+			for _, entry := range transformed {
+				numBytes, err := ExportEntry(entry, outFile, commonArgs.Extra)
 				if err != nil {
-					cmdLogger.LogError(fmt.Errorf("could not export ledger %d: %s", startNum+uint32(i), err))
-					numFailures += 1
+					cmdLogger.LogError(fmt.Errorf("could not export token transfer for ledger %d: %v", startNum+uint32(i), err))
+					results.NumFailures++
 					continue
 				}
-				totalNumBytes += numBytes
+				results.TotalNumBytes += numBytes
 			}
 		}
 
-		outFile.Close()
-		cmdLogger.Info("Number of bytes written: ", totalNumBytes)
-
-		PrintTransformStats(len(ledgers), numFailures)
-
-		MaybeUpload(cloudCredentials, cloudStorageBucket, cloudProvider, path)
+		FinishExport(results, cloudCredentials, cloudStorageBucket, cloudProvider, path, "", false, nil)
 	},
 }
 
