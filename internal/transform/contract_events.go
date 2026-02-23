@@ -18,7 +18,8 @@ import (
 // TransformContractEvent converts a transaction's contract events and diagnostic events into a form suitable for BigQuery.
 // It is known that contract events are a subset of the diagnostic events XDR definition. We are opting to call all of these events
 // contract events for better clarity to data analytics users.
-func TransformContractEvent(transaction ingest.LedgerTransaction, lhe xdr.LedgerHeaderHistoryEntry) ([]ContractEventOutput, error) {
+// eventTypes is a list of event types to include in the output. If empty, all event types are included.
+func TransformContractEvent(transaction ingest.LedgerTransaction, lhe xdr.LedgerHeaderHistoryEntry, eventTypes []xdr.ContractEventType) ([]ContractEventOutput, error) {
 	// GetTransactionEvents will return all contract events and diagnostic events emitted
 	transactionEvents, err := transaction.GetTransactionEvents()
 	if err != nil {
@@ -35,7 +36,9 @@ func TransformContractEvent(transaction ingest.LedgerTransaction, lhe xdr.Ledger
 			return []ContractEventOutput{}, err
 		}
 
-		transformedContractEvents = append(transformedContractEvents, parsedDiagnosticEvent)
+		if matchesEventTypeFilter(parsedDiagnosticEvent.Type, eventTypes) {
+			transformedContractEvents = append(transformedContractEvents, parsedDiagnosticEvent)
+		}
 	}
 
 	// Note that OperationEvents is an array of operations each with an array of ContractEvents (e.g., [][]ContractEvents)
@@ -51,7 +54,9 @@ func TransformContractEvent(transaction ingest.LedgerTransaction, lhe xdr.Ledger
 
 			parsedDiagnosticEvent.OperationID = null.IntFrom(operationID)
 
-			transformedContractEvents = append(transformedContractEvents, parsedDiagnosticEvent)
+			if matchesEventTypeFilter(parsedDiagnosticEvent.Type, eventTypes) {
+				transformedContractEvents = append(transformedContractEvents, parsedDiagnosticEvent)
+			}
 		}
 	}
 
@@ -61,10 +66,26 @@ func TransformContractEvent(transaction ingest.LedgerTransaction, lhe xdr.Ledger
 			return []ContractEventOutput{}, err
 		}
 
-		transformedContractEvents = append(transformedContractEvents, parsedDiagnosticEvent)
+		if matchesEventTypeFilter(parsedDiagnosticEvent.Type, eventTypes) {
+			transformedContractEvents = append(transformedContractEvents, parsedDiagnosticEvent)
+		}
 	}
 
 	return transformedContractEvents, nil
+}
+
+// matchesEventTypeFilter returns true if the event type is in the list of allowed event types.
+// If allowedTypes is empty, all event types are allowed.
+func matchesEventTypeFilter(eventType int32, allowedTypes []xdr.ContractEventType) bool {
+	if len(allowedTypes) == 0 {
+		return true
+	}
+	for _, t := range allowedTypes {
+		if eventType == int32(t) {
+			return true
+		}
+	}
+	return false
 }
 
 // TODO this should be a stellar/go/xdr function

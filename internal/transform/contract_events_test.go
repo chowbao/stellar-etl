@@ -39,7 +39,7 @@ func TestTransformContractEvent(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		actualOutput, actualError := TransformContractEvent(test.input.transaction, test.input.historyHeader)
+		actualOutput, actualError := TransformContractEvent(test.input.transaction, test.input.historyHeader, []xdr.ContractEventType{})
 		assert.Equal(t, test.wantErr, actualError)
 		assert.Equal(t, test.wantOutput, actualOutput)
 	}

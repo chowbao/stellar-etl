@@ -11,10 +11,10 @@ import (
 	"github.com/stellar/stellar-etl/v2/internal/utils"
 )
 
-var contractEventsCmd = &cobra.Command{
-	Use:   "export_contract_events",
-	Short: "Exports the contract events over a specified range.",
-	Long:  `Exports the contract events over a specified range to an output file.`,
+var diagnosticEventsCmd = &cobra.Command{
+	Use:   "export_diagnostic_events",
+	Short: "Exports the diagnostic events over a specified range.",
+	Long:  `Exports the diagnostic and system events over a specified range to an output file.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cmdLogger.SetLevel(logrus.InfoLevel)
 		cmdArgs := utils.MustFlags(cmd.Flags(), cmdLogger)
@@ -32,24 +32,24 @@ var contractEventsCmd = &cobra.Command{
 		numFailures := 0
 		var transformedEvents []transform.SchemaParquet
 		for _, transformInput := range transactions {
-			transformed, err := transform.TransformContractEvent(transformInput.Transaction, transformInput.LedgerHistory, []xdr.ContractEventType{xdr.ContractEventTypeContract})
+			transformed, err := transform.TransformContractEvent(transformInput.Transaction, transformInput.LedgerHistory, []xdr.ContractEventType{xdr.ContractEventTypeDiagnostic, xdr.ContractEventTypeSystem})
 			if err != nil {
 				ledgerSeq := transformInput.LedgerHistory.Header.LedgerSeq
-				cmdLogger.LogError(fmt.Errorf("could not transform contract events in transaction %d in ledger %d: ", transformInput.Transaction.Index, ledgerSeq))
+				cmdLogger.LogError(fmt.Errorf("could not transform diagnostic events in transaction %d in ledger %d: ", transformInput.Transaction.Index, ledgerSeq))
 				numFailures += 1
 				continue
 			}
 
-			for _, contractEvent := range transformed {
-				_, err := ExportEntry(contractEvent, outFile, cmdArgs.Extra)
+			for _, diagnosticEvent := range transformed {
+				_, err := ExportEntry(diagnosticEvent, outFile, cmdArgs.Extra)
 				if err != nil {
-					cmdLogger.LogError(fmt.Errorf("could not export contract event: %v", err))
+					cmdLogger.LogError(fmt.Errorf("could not export diagnostic event: %v", err))
 					numFailures += 1
 					continue
 				}
 
 				if commonArgs.WriteParquet {
-					transformedEvents = append(transformedEvents, contractEvent)
+					transformedEvents = append(transformedEvents, diagnosticEvent)
 				}
 			}
 
@@ -70,11 +70,11 @@ var contractEventsCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(contractEventsCmd)
-	utils.AddCommonFlags(contractEventsCmd.Flags())
-	utils.AddArchiveFlags("contract_events", contractEventsCmd.Flags())
-	utils.AddCloudStorageFlags(contractEventsCmd.Flags())
+	rootCmd.AddCommand(diagnosticEventsCmd)
+	utils.AddCommonFlags(diagnosticEventsCmd.Flags())
+	utils.AddArchiveFlags("diagnostic_events", diagnosticEventsCmd.Flags())
+	utils.AddCloudStorageFlags(diagnosticEventsCmd.Flags())
 
-	contractEventsCmd.MarkFlagRequired("start-ledger")
-	contractEventsCmd.MarkFlagRequired("end-ledger")
+	diagnosticEventsCmd.MarkFlagRequired("start-ledger")
+	diagnosticEventsCmd.MarkFlagRequired("end-ledger")
 }
