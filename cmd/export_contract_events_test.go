@@ -8,7 +8,7 @@ func TestExportContractEvents(t *testing.T) {
 	tests := []CliTest{
 		{
 			Name:    "contract events from multiple ledger",
-			Args:    []string{"export_contract_events", "-s", "52271338", "-e", "52271350", "-o", GotTestDir(t, "large_range_ledger_txs.txt")},
+			Args:    []string{"export_contract_events", "-s", "52271338", "-e", "52271350", "-o", GotTestDir(t, "large_range_ledger_txs.json")},
 			Golden:  "large_range_ledger_txs.golden",
 			WantErr: nil,
 		},
