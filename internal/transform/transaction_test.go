@@ -107,7 +107,6 @@ func makeTransactionTestOutput() (output []TransactionOutput, err error) {
 			SorobanResourcesDiskReadBytes: 0,
 			SorobanResourcesWriteBytes:    0,
 			TransactionResultCode:         "TransactionResultCodeTxFailed",
-			TxSigners:                     []string{"GD2GXC24XWOM6T2UHABEMSYW5UZGJ4U7WEN7AQT2WYW32TQFP4ND3M7O4VGCBTT2BWNILFEVDX5DBBBMK2RTQIBMJNL6F62MAQ53NBAIXUDA"},
 		},
 		{
 			TxEnvelope:                    "AAAABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABwgAAAAAgAAAACI4aa0pXFSj6qfJuIObLw/5zyugLRGYwxb7wFSr3B9eAAAAAACFPY2AAAAfQAAAAEAAAAAAAAAAAAAAABfBqt0AAAAAQAAABdITDVhQ2dvelFISVc3c1NjNVhkY2ZtUgAAAAABAAAAAQAAAAAcR0GXGO76pFs4y38vJVAanjnLg4emNun7zAx0pHcDGAAAAAIAAAAAAAAAAAAAAAAAAAAAAQIDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPoAAAAAAAAAAAAAAABY0KvjwAAAED0a4tcvZzPT1Q4AkZLFu0yZPKfsRvwQnq2Lb1OBX8aPbPu5UwgznoNmoWUlR36MIQsVqM4ICxLV+L7TAQ7toQI",
@@ -138,7 +137,6 @@ func makeTransactionTestOutput() (output []TransactionOutput, err error) {
 			SorobanResourcesDiskReadBytes: 0,
 			SorobanResourcesWriteBytes:    0,
 			TransactionResultCode:         "TransactionResultCodeTxFeeBumpInnerSuccess", //inner fee bump success
-			TxSigners:                     []string{"GD2GXC24XWOM6T2UHABEMSYW5UZGJ4U7WEN7AQT2WYW32TQFP4ND3M7O4VGCBTT2BWNILFEVDX5DBBBMK2RTQIBMJNL6F62MAQ53NBAIXUDA"},
 			InclusionFeeBid:               6200,
 			InclusionFeeCharged:           50,
 		},
@@ -171,7 +169,6 @@ func makeTransactionTestOutput() (output []TransactionOutput, err error) {
 			SorobanResourcesDiskReadBytes: 0,
 			SorobanResourcesWriteBytes:    0,
 			TransactionResultCode:         "TransactionResultCodeTxInsufficientBalance",
-			TxSigners:                     []string{"GD2GXC24XWOM6T2UHABEMSYW5UZGJ4U7WEN7AQT2WYW32TQFP4ND3M7O4VGCBTT2BWNILFEVDX5DBBBMK2RTQIBMJNL6F62MAQ53NBAIXUDA"},
 		},
 	}
 	return
